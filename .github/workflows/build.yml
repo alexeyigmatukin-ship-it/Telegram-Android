@@ -1,4 +1,4 @@
-name: Build Custom Telegram APK
+herename: Build Custom Stealth Client APK
 
 on:
   workflow_dispatch:
@@ -25,89 +25,146 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
             TMessagesProj/.cxx
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/CMakeLists.txt') }}
+          key: ${{ runner.os }}-gradle-stealth-v1-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-gradle-
+            ${{ runner.os }}-gradle-stealth-v1-
+
+      - name: Clone whisper.cpp
+        run: git clone --depth 1 https://github.com TMessagesProj/jni/whisper
 
       - name: Decode Keystore
-        run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > TMessagesProj/my_telegram.jks
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > TMessagesProj/my_telegram.jks
 
-      - name: Apply Custom Patches (Package, Anti-Delete, Save TTL Media)
+      - name: Apply Stealth and Feature Patches
+        env:
+          API_ID: ${{ secrets.TG_API_ID || '2040' }}
+          API_HASH: ${{ secrets.TG_API_HASH || 'b18441a1ff607e10a989891a5462e627' }}
+          NEW_PKG: "com.alexey.notesclient"
+          NEW_NAME: "Notes"
         run: |
           python3 - << 'EOF'
-          import re, glob
+          import os, re, glob
 
-          # 1. API Keys
+          api_id, api_hash = os.environ["API_ID"], os.environ["API_HASH"]
+          new_pkg, new_name = os.environ["NEW_PKG"], os.environ["NEW_NAME"]
+
           bv_path = "TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java"
-          with open(bv_path, "r", encoding="utf-8") as f:
-              bv = f.read()
-          bv = re.sub(r'public static int APP_ID = .*?;', 'public static int APP_ID = 2040;', bv)
-          bv = re.sub(r'public static String APP_HASH = .*?;', 'public static String APP_HASH = "b18441a1ff607e10a989891a5462e627";', bv)
-          with open(bv_path, "w", encoding="utf-8") as f:
-              f.write(bv)
+          bv = open(bv_path, encoding="utf-8").read()
+          bv = re.sub(r'public static int APP_ID = .*?;', f'public static int APP_ID = {api_id};', bv)
+          bv = re.sub(r'public static String APP_HASH = .*?;', f'public static String APP_HASH = "{api_hash}";', bv)
+          open(bv_path, "w", encoding="utf-8").write(bv)
 
-          # 2. Separate Package ID & App Name
-          app_gradle = "TMessagesProj_App/build.gradle"
-          with open(app_gradle, "r", encoding="utf-8") as f:
-              ag = f.read()
-          ag = ag.replace('applicationId "org.telegram.messenger"', 'applicationId "org.telegram.mycustom"')
-          with open(app_gradle, "w", encoding="utf-8") as f:
-              f.write(ag)
+          for gf_path in glob.glob("**/build.gradle", recursive=True):
+              gf = open(gf_path, encoding="utf-8").read()
+              gf = re.sub(r'applicationId\s+"org\.telegram\.messenger[^"]*"', f'applicationId "{new_pkg}"', gf)
+              gf = re.sub(r'applicationIdSuffix\s+"[^"]*"', '', gf)
+              open(gf_path, "w", encoding="utf-8").write(gf)
 
-          for xml_file in glob.glob("TMessagesProj/src/main/res/values*/strings.xml"):
-              with open(xml_file, "r", encoding="utf-8") as f:
-                  xml = f.read()
-              xml = xml.replace('<string name="AppName">Telegram</string>', '<string name="AppName">MyTelegram</string>')
-              with open(xml_file, "w", encoding="utf-8") as f:
-                  f.write(xml)
+          for mf_path in glob.glob("**/AndroidManifest.xml", recursive=True):
+              mf = open(mf_path, encoding="utf-8").read()
+              for suff in ["provider", "call_provider", "notification_image_provider", "permission.MAPS_RECEIVE", "DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"]:
+                  mf = mf.replace(f"org.telegram.messenger.{suff}", f"{new_pkg}.{suff}")
+              open(mf_path, "w", encoding="utf-8").write(mf)
 
-          # 3. Anti-Delete (block local DB deletion)
-          ms_path = "TMessagesProj/src/main/java/org/telegram/messenger/MessagesStorage.java"
-          with open(ms_path, "r", encoding="utf-8") as f:
-              ms = f.read()
-          target_del = "public void markMessagesAsDeleted(final long dialogId, final ArrayList<Integer> messages, boolean channel, boolean scheduled, int deleteDate, int taskId) {"
-          if target_del in ms:
-              ms = ms.replace(target_del, target_del + "\n        if (true) return;")
-              print("Anti-delete patch applied!")
-          with open(ms_path, "w", encoding="utf-8") as f:
-              f.write(ms)
+          for xml_path in glob.glob("TMessagesProj/src/main/res/values*/strings.xml"):
+              xml = open(xml_path, encoding="utf-8").read()
+              xml = re.sub(r'<string name="AppName">[^<]*</string>', f'<string name="AppName">{new_name}</string>', xml)
+              open(xml_path, "w", encoding="utf-8").write(xml)
 
-          # 4. Save Disposable Media (allow saving secret/TTL media)
-          smv_path = "TMessagesProj/src/main/java/org/telegram/ui/SecretMediaViewer.java"
-          with open(smv_path, "r", encoding="utf-8") as f:
-              smv = f.read()
-          smv = smv.replace("isSecretMedia()", "false")
-          with open(smv_path, "w", encoding="utf-8") as f:
-              f.write(smv)
-          print("TTL media patch applied!")
-          EOF
-
-          cat << 'EOF' >> TMessagesProj/build.gradle
-          android {
-              signingConfigs {
-                  release {
-                      storeFile file("my_telegram.jks")
-                      storePassword "${{ secrets.KEYSTORE_PASSWORD }}"
-                      keyAlias "${{ secrets.KEY_ALIAS }}"
-                      keyPassword "${{ secrets.KEY_PASSWORD }}"
-                  }
+          h_dir = "TMessagesProj/src/main/java/org/telegram/messenger"
+          open(f"{h_dir}/CustomConfig.java", "w", encoding="utf-8").write('''package org.telegram.messenger;
+          import android.content.Context;
+          import android.content.SharedPreferences;
+          public class CustomConfig {
+              private static SharedPreferences getPrefs() {
+                  return ApplicationLoader.applicationContext.getSharedPreferences("my_custom_prefs", Context.MODE_PRIVATE);
               }
-              buildTypes {
-                  release {
-                      signingConfig signingConfigs.release
-                  }
-              }
+              public static boolean isStockMode(long dialogId) { return getPrefs().getBoolean("stock_" + dialogId, false); }
+              public static void toggleStockMode(long dialogId) { getPrefs().edit().putBoolean("stock_" + dialogId, !isStockMode(dialogId)).apply(); }
+              public static boolean isForce120Hz() { return getPrefs().getBoolean("force_120hz", true); }
           }
+          ''')
+
+          ms_path = f"{h_dir}/MessagesStorage.java"
+          ms = open(ms_path, encoding="utf-8").read()
+          t_del = "public void markMessagesAsDeleted(final long dialogId, final ArrayList<Integer> messages, boolean channel, boolean scheduled, int deleteDate, int taskId) {"
+          if t_del in ms:
+              ms = ms.replace(t_del, t_del + "\n        if (!CustomConfig.isStockMode(dialogId)) return;")
+          open(ms_path, "w", encoding="utf-8").write(ms)
+
+          smv_path = "TMessagesProj/src/main/java/org/telegram/ui/SecretMediaViewer.java"
+          smv = open(smv_path, encoding="utf-8").read()
+          smv = smv.replace("currentMessageObject.isSecretMedia()", "(currentMessageObject != null && CustomConfig.isStockMode(currentMessageObject.getDialogId()) && currentMessageObject.isSecretMedia())")
+          open(smv_path, "w", encoding="utf-8").write(smv)
+
+          au_path = f"{h_dir}/AndroidUtilities.java"
+          au = open(au_path, encoding="utf-8").read()
+          au = au.replace("screenRefreshRate = 60;", "screenRefreshRate = CustomConfig.isForce120Hz() ? 120 : 60;")
+          open(au_path, "w", encoding="utf-8").write(au)
           EOF
 
-      - name: Build arm64 Release APK
+      - name: Integrate Native Whisper.cpp
         run: |
-          chmod +x gradlew
-          ./gradlew assembleAfatRelease --max-workers=4
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: MyTelegram-arm64
-          path: TMessagesProj_App/build/outputs/apk/afat/release/*.apk
+          cat << 'EOF' > TMessagesProj/jni/whisper_jni.cpp
+          #include <jni.h>
+          #include <string>
+          #include <vector>
+          #include "whisper/include/whisper.h"
+          extern "C" {
+          #include <libavformat/avformat.h>
+          #include <libavcodec/avcodec.h>
+          #include <libswresample/swresample.h>
+          #include <libavutil/opt.h>
+          }
+          static struct whisper_context *g_ctx = nullptr;
+          static bool decode_audio_to_pcm16(const char* path, std::vector<float>& pcmf32) {
+              AVFormatContext* fmt_ctx = nullptr;
+              if (avformat_open_input(&fmt_ctx, path, nullptr, nullptr) < 0) return false;
+              if (avformat_find_stream_info(fmt_ctx, nullptr) < 0) { avformat_close_input(&fmt_ctx); return false; }
+              int stream_idx = av_find_best_stream(fmt_ctx, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+              if (stream_idx < 0) { avformat_close_input(&fmt_ctx); return false; }
+              AVStream* stream = fmt_ctx->streams[stream_idx];
+              const AVCodec* dec = avcodec_find_decoder(stream->codecpar->codec_id);
+              AVCodecContext* dec_ctx = avcodec_alloc_context3(dec);
+              avcodec_parameters_to_context(dec_ctx, stream->codecpar);
+              if (avcodec_open2(dec_ctx, dec, nullptr) < 0) { avcodec_free_context(&dec_ctx); avformat_close_input(&fmt_ctx); return false; }
+              SwrContext* swr = swr_alloc();
+              av_opt_set_int(swr, "in_channel_layout", dec_ctx->channel_layout ? dec_ctx->channel_layout : av_get_default_channel_layout(dec_ctx->channels), 0);
+              av_opt_set_int(swr, "in_sample_rate", dec_ctx->sample_rate, 0);
+              av_opt_set_sample_fmt(swr, "in_sample_fmt", dec_ctx->sample_fmt, 0);
+              av_opt_set_int(swr, "out_channel_layout", AV_CH_LAYOUT_MONO, 0);
+              av_opt_set_int(swr, "out_sample_rate", 16000, 0);
+              av_opt_set_sample_fmt(swr, "out_sample_fmt", AV_SAMPLE_FMT_FLT, 0);
+              swr_init(swr);
+              AVPacket* pkt = av_packet_alloc();
+              AVFrame* frame = av_frame_alloc();
+              while (av_read_frame(fmt_ctx, pkt) >= 0) {
+                  if (pkt->stream_index == stream_idx && avcodec_send_packet(dec_ctx, pkt) == 0) {
+                      while (avcodec_receive_frame(dec_ctx, frame) == 0) {
+                          int out_samples = av_rescale_rnd(swr_get_delay(swr, dec_ctx->sample_rate) + frame->nb_samples, 16000, dec_ctx->sample_rate, AV_ROUND_UP);
+                          std::vector<float> buf(out_samples);
+                          uint8_t* out_ptr = reinterpret_cast<uint8_t*>(buf.data());
+                          int converted = swr_convert(swr, &out_ptr, out_samples, (const uint8_t**)frame->data, frame->nb_samples);
+                          if (converted > 0) pcmf32.insert(pcmf32.end(), buf.begin(), buf.begin() + converted);
+                      }
+                  }
+                  av_packet_unref(pkt);
+              }
+              av_frame_free(&frame); av_packet_free(&pkt); swr_free(&swr); avcodec_free_context(&dec_ctx); avformat_close_input(&fmt_ctx);
+              return !pcmf32.empty();
+          }
+          extern "C" JNIEXPORT jstring JNICALL
+          Java_org_telegram_messenger_WhisperHelper_transcribeNative(JNIEnv* env, jclass clazz, jstring modelPath, jstring audioPath) {
+              const char* m_path = env->GetStringUTFChars(modelPath, nullptr);
+              const char* a_path = env->GetStringUTFChars(audioPath, nullptr);
+              if (g_ctx == nullptr) {
+                  struct whisper_context_params cparams = whisper_context_default_params();
+                  g_ctx = whisper_init_from_file_with_params(m_path, cparams);
+              }
+              if (g_ctx == nullptr) { env->ReleaseStringUTFChars(modelPath, m_path); env->ReleaseStringUTFChars(audioPath, a_path); return env->NewStringUTF("Ошибка модели"); }
+              std::vector<float> pcmf32;
+              if (!decode_audio_to_pcm16(a_path, pcmf32)) { env->ReleaseStringUTFChars(modelPath, m_path); env->ReleaseStringUTFChars(audioPath, a_path); return env->NewStringUTF("Ошибка аудио"); }
+              whisper_full_params wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+              wparams.language = "ru"; wparams.n_threads = 6; wparams.print_progress = false; wparams.print_realtime = false;
+              if (whisper_full(g_ctx, wparams, pcmf32.data(), pcmf32.size()) != 0) { env->ReleaseStringUTFChars(modelPath, m_path); env->ReleaseStringUTFChars(audioPath, a_path); return env->NewStringUTF("Ошибка распознавания"); }
+              std::string result;
