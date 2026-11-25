@@ -18,26 +18,29 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Cache Gradle
+      - name: Cache Gradle and CMake
         uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-stealth-v8-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-stealth-v9-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-gradle-stealth-v8-
+            ${{ runner.os }}-gradle-stealth-v9-
+
+      - name: Clean old CMake cache
+        run: |
+          rm -rf TMessagesProj/.cxx
 
       - name: Clone whisper.cpp
         run: |
-          rm -rf TMessagesProj/jni/whisper
           git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git TMessagesProj/jni/whisper
 
       - name: Decode Keystore
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > TMessagesProj/my_telegram.jks
 
-      - name: Apply Stealth & Feature Patches
+      - name: Apply Stealth and Feature Patches
         env:
           API_ID: ${{ secrets.TG_API_ID || '2040' }}
           API_HASH: ${{ secrets.TG_API_HASH || 'b18441a1ff607e10a989891a5462e627' }}
@@ -61,38 +64,33 @@ jobs:
           with open(bv_path, "w", encoding="utf-8") as f:
               f.write(bv)
 
-          # 2. Safe Package ID & Authorities Replacement (Without breaking AGP 8+ DSL)
-          app_gradle = "TMessagesProj_App/build.gradle"
-          with open(app_gradle, "r", encoding="utf-8") as f:
-              ag = f.read()
-          ag = re.sub(r'applicationId\s+["']org\.telegram\.messenger[^"']*["']', f'applicationId "{new_pkg}"', ag)
-          ag = re.sub(r'applicationIdSuffix\s+["'][^"']*["']', '', ag)
-          with open(app_gradle, "w", encoding="utf-8") as f:
-              f.write(ag)
+          # 2. Complete Package ID & Authorities Replacement (Stealth mode)
+          for gf_path in glob.glob("**/build.gradle", recursive=True):
+              with open(gf_path, "r", encoding="utf-8") as f:
+                  gf = f.read()
+              gf = re.sub(r'applicationId\s+["\']org\.telegram\.messenger[^"\']*["\']', f'applicationId "{new_pkg}"', gf)
+              gf = re.sub(r'applicationIdSuffix\s+["\'][^"\']*["\']', '', gf)
+              with open(gf_path, "w", encoding="utf-8") as f:
+                  f.write(gf)
 
-          for manifest in glob.glob("**/AndroidManifest.xml", recursive=True):
-              with open(manifest, "r", encoding="utf-8") as f:
-                  m = f.read()
-              m = m.replace("org.telegram.messenger.provider", f"{new_pkg}.provider")
-              m = m.replace("org.telegram.messenger.call_provider", f"{new_pkg}.call_provider")
-              m = m.replace("org.telegram.messenger.notification_image_provider", f"{new_pkg}.notification_image_provider")
-              m = m.replace("org.telegram.messenger.permission.MAPS_RECEIVE", f"{new_pkg}.permission.MAPS_RECEIVE")
-              m = m.replace("org.telegram.messenger.permission.C2D_MESSAGE", f"{new_pkg}.permission.C2D_MESSAGE")
-              m = m.replace("org.telegram.messenger.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION", f"{new_pkg}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION")
-              with open(manifest, "w", encoding="utf-8") as f:
-                  f.write(m)
+          for mf_path in glob.glob("**/AndroidManifest.xml", recursive=True):
+              with open(mf_path, "r", encoding="utf-8") as f:
+                  mf = f.read()
+              for suff in ["provider", "call_provider", "notification_image_provider", "permission.MAPS_RECEIVE", "permission.C2D_MESSAGE", "DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"]:
+                  mf = mf.replace(f"org.telegram.messenger.{suff}", f"{new_pkg}.{suff}")
+              with open(mf_path, "w", encoding="utf-8") as f:
+                  f.write(mf)
 
-          for xml_file in glob.glob("TMessagesProj/src/main/res/values*/strings.xml"):
-              with open(xml_file, "r", encoding="utf-8") as f:
+          for xml_path in glob.glob("TMessagesProj/src/main/res/values*/strings.xml"):
+              with open(xml_path, "r", encoding="utf-8") as f:
                   xml = f.read()
               xml = re.sub(r'<string name="AppName">[^<]*</string>', f'<string name="AppName">{new_name}</string>', xml)
-              with open(xml_file, "w", encoding="utf-8") as f:
+              with open(xml_path, "w", encoding="utf-8") as f:
                   f.write(xml)
 
-          # 3. CustomConfig Helper (Stock Mode & 120Hz)
+          # 3. Stock Mode & Graphics Config Helper
           h_dir = "TMessagesProj/src/main/java/org/telegram/messenger"
-          with open(f"{h_dir}/CustomConfig.java", "w", encoding="utf-8") as f:
-              f.write('''package org.telegram.messenger;
+          custom_cfg = '''package org.telegram.messenger;
 
           import android.content.Context;
           import android.content.SharedPreferences;
@@ -111,16 +109,17 @@ jobs:
                   return getPrefs().getBoolean("force_120hz", true);
               }
           }
-          ''')
+          '''
+          with open(f"{h_dir}/CustomConfig.java", "w", encoding="utf-8") as f:
+              f.write(custom_cfg)
 
           # 4. Anti-Delete (respects Stock Mode)
           ms_path = f"{h_dir}/MessagesStorage.java"
           with open(ms_path, "r", encoding="utf-8") as f:
               ms = f.read()
           ms, count_del = re.subn(
-              r'(public void markMessagesAsDeleted\(\s*final long dialogId[^{]*\{)',
-              r'
-        if (!CustomConfig.isStockMode(dialogId)) return;',
+              r'(public void markMessagesAsDeleted\(\s*final long dialogId[^\)]*\)\s*\{)',
+              r'\g<0>\n        if (!CustomConfig.isStockMode(dialogId)) return;',
               ms,
               count=1
           )
@@ -145,8 +144,7 @@ jobs:
               cmc = f.read()
           cmc = re.sub(
               r'(private boolean hasTranscribeButton\(\)\s*\{)',
-              r'
-        if (currentMessageObject != null && (currentMessageObject.isVoice() || currentMessageObject.isRoundVideo())) return true;',
+              r'\g<0>\n        if (currentMessageObject != null && (currentMessageObject.isVoice() || currentMessageObject.isRoundVideo())) return true;',
               cmc,
               count=1
           )
@@ -158,25 +156,21 @@ jobs:
           with open(pa_path, "r", encoding="utf-8") as f:
               pa = f.read()
           if "otherItem.addSubItem(" in pa:
-              pa = re.sub(
-                  r'(otherItem\.addSubItem\([^;]+;\s*)',
-                  r'otherItem.addSubItem(9991, org.telegram.messenger.R.drawable.msg_settings, "Сток-режим (вкл/выкл)");
-',
-                  pa,
-                  count=1
+              pa = pa.replace(
+                  "otherItem.addSubItem(",
+                  'otherItem.addSubItem(9991, org.telegram.messenger.R.drawable.msg_settings, "Сток-режим (вкл/выкл)");\n                    otherItem.addSubItem(',
+                  1
               )
-              pa = re.sub(
-                  r'(public void onItemClick\(int id\)\s*\{)',
-                  r'
-                if (id == 9991) { CustomConfig.toggleStockMode(getDialogId()); org.telegram.ui.Components.BulletinFactory.of(ProfileActivity.this).createSimpleBulletin(org.telegram.messenger.R.raw.info, CustomConfig.isStockMode(getDialogId()) ? "Сток-режим ВКЛЮЧЕН" : "Сток-режим ВЫКЛЮЧЕН").show(); return; }',
-                  pa,
-                  count=1
-              )
-              print("ProfileActivity stock-mode toggle injected!")
+          pa = re.sub(
+              r'(public void onItemClick\(int id\)\s*\{)',
+              r'\g<0>\n                if (id == 9991) { CustomConfig.toggleStockMode(getDialogId()); org.telegram.ui.Components.BulletinFactory.of(ProfileActivity.this).createSimpleBulletin(org.telegram.messenger.R.raw.ic_ban, CustomConfig.isStockMode(getDialogId()) ? "Сток-режим ВКЛ" : "Сток-режим ВЫКЛ").show(); return; }',
+              pa,
+              count=1
+          )
           with open(pa_path, "w", encoding="utf-8") as f:
               f.write(pa)
 
-          # 8. Graphics: Force 120Hz
+          # 8. Graphics: Force 120Hz Refresh Rate
           au_path = f"{h_dir}/AndroidUtilities.java"
           with open(au_path, "r", encoding="utf-8") as f:
               au = f.read()
@@ -185,7 +179,7 @@ jobs:
               f.write(au)
           EOF
 
-      - name: Integrate Static Whisper.cpp (small-q5_1)
+      - name: Integrate Static Native Whisper.cpp (small-q5_1)
         run: |
           cat << 'EOF' > TMessagesProj/jni/whisper_jni.cpp
           #include <jni.h>
@@ -198,6 +192,7 @@ jobs:
           #include <libavcodec/avcodec.h>
           #include <libswresample/swresample.h>
           #include <libavutil/opt.h>
+          #include <libavutil/channel_layout.h>
           }
 
           static struct whisper_context *g_ctx = nullptr;
@@ -275,28 +270,16 @@ jobs:
               cm = f.read()
           m = re.search(r'add_library\(\s*(tmessages\.\d+)', cm)
           tgt = m.group(1) if m else "tmessages.49"
-          print(f"Detected CMake target: {tgt}")
-          addition = (
-              "
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-"
-              "set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-"
-              "set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-"
-              "set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
-"
-              "set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
-"
-              "add_subdirectory(whisper)
-"
-              f"target_sources({tgt} PRIVATE whisper_jni.cpp)
-"
-              f"target_include_directories({tgt} PRIVATE whisper/include whisper/ggml/include)
-"
-              f"target_link_libraries({tgt} whisper)
-"
-          )
+          addition = f"""
+          set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+          set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+          set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+          set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+          add_subdirectory(whisper)
+          target_sources({tgt} PRIVATE whisper_jni.cpp)
+          target_include_directories({tgt} PRIVATE whisper/include whisper/ggml/include)
+          target_link_libraries({tgt} whisper)
+          """
           with open(cm_path, "w", encoding="utf-8") as f:
               f.write(cm + addition)
           EOF
@@ -347,7 +330,7 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
           mc_path = "TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java"
           with open(mc_path, "r", encoding="utf-8") as f:
               mc = f.read()
-          hook = '''public void transcribeAudio(MessageObject messageObject) {
+          hook = '''\g<0>
                   if (messageObject != null) {
                       Utilities.globalQueue.postRunnable(() -> {
                           java.io.File file = FileLoader.getInstance(currentAccount).getPathToMessage(messageObject.messageOwner);
@@ -362,8 +345,8 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
                       });
                       return;
                   }'''
-          mc, cnt = re.subn(r'public void transcribeAudio\(MessageObject messageObject\)\s*\{', hook, mc, count=1)
-          print(f"Whisper hook injected count: {cnt}")
+          mc, count_tr = re.subn(r'(public void transcribeAudio\(\s*MessageObject messageObject[^\)]*\)\s*\{)', hook, mc, count=1)
+          print(f"Whisper hook count: {count_tr}")
           with open(mc_path, "w", encoding="utf-8") as f:
               f.write(mc)
           EOF
@@ -391,12 +374,11 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
           chmod +x gradlew
           ./gradlew :TMessagesProj_App:assembleAfatRelease --max-workers=4
 
-      - name: Check Output APK Package Name
+      - name: Verify APK Package Name
         run: |
-          APK_FILE=$(find TMessagesProj_App/build/outputs/apk/afat/release/ -name "*.apk" | head -n 1)
-          echo "Built APK: $APK_FILE"
-          AAPT2=$(find $ANDROID_HOME/build-tools -name "aapt2" | sort -V | tail -n 1)
-          $AAPT2 dump badging "$APK_FILE" | head -n 5
+          AAPT2=$(find $ANDROID_HOME/build-tools -name aapt2 | head -n 1)
+          APK=$(find TMessagesProj_App/build/outputs/apk/afat/release -name "*.apk" | head -n 1)
+          $AAPT2 dump badging "$APK" | grep "package:"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
