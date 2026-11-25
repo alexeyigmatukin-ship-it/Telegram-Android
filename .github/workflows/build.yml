@@ -1,4 +1,4 @@
-name: Build Clean Telegram APK
+name: Build Custom Telegram APK
 
 on:
   workflow_dispatch:
@@ -18,15 +18,71 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Cache Gradle and CMake
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            TMessagesProj/.cxx
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
       - name: Decode Keystore
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > TMessagesProj/my_telegram.jks
 
-      - name: Inject API Keys & Signing Config
+      - name: Apply Custom Patches (Package, Anti-Delete, Save TTL Media)
         run: |
-          sed -i 's/public static int APP_ID = .*/public static int APP_ID = 2040;/' TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
-          sed -i 's/public static String APP_HASH = .*/public static String APP_HASH = "b18441a1ff607e10a989891a5462e627";/' TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
-          
+          python3 - << 'EOF'
+          import re, glob
+
+          # 1. API Keys
+          bv_path = "TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java"
+          with open(bv_path, "r", encoding="utf-8") as f:
+              bv = f.read()
+          bv = re.sub(r'public static int APP_ID = .*?;', 'public static int APP_ID = 2040;', bv)
+          bv = re.sub(r'public static String APP_HASH = .*?;', 'public static String APP_HASH = "b18441a1ff607e10a989891a5462e627";', bv)
+          with open(bv_path, "w", encoding="utf-8") as f:
+              f.write(bv)
+
+          # 2. Separate Package ID & App Name
+          app_gradle = "TMessagesProj_App/build.gradle"
+          with open(app_gradle, "r", encoding="utf-8") as f:
+              ag = f.read()
+          ag = ag.replace('applicationId "org.telegram.messenger"', 'applicationId "org.telegram.mycustom"')
+          with open(app_gradle, "w", encoding="utf-8") as f:
+              f.write(ag)
+
+          for xml_file in glob.glob("TMessagesProj/src/main/res/values*/strings.xml"):
+              with open(xml_file, "r", encoding="utf-8") as f:
+                  xml = f.read()
+              xml = xml.replace('<string name="AppName">Telegram</string>', '<string name="AppName">MyTelegram</string>')
+              with open(xml_file, "w", encoding="utf-8") as f:
+                  f.write(xml)
+
+          # 3. Anti-Delete (block local DB deletion)
+          ms_path = "TMessagesProj/src/main/java/org/telegram/messenger/MessagesStorage.java"
+          with open(ms_path, "r", encoding="utf-8") as f:
+              ms = f.read()
+          target_del = "public void markMessagesAsDeleted(final long dialogId, final ArrayList<Integer> messages, boolean channel, boolean scheduled, int deleteDate, int taskId) {"
+          if target_del in ms:
+              ms = ms.replace(target_del, target_del + "\n        if (true) return;")
+              print("Anti-delete patch applied!")
+          with open(ms_path, "w", encoding="utf-8") as f:
+              f.write(ms)
+
+          # 4. Save Disposable Media (allow saving secret/TTL media)
+          smv_path = "TMessagesProj/src/main/java/org/telegram/ui/SecretMediaViewer.java"
+          with open(smv_path, "r", encoding="utf-8") as f:
+              smv = f.read()
+          smv = smv.replace("isSecretMedia()", "false")
+          with open(smv_path, "w", encoding="utf-8") as f:
+              f.write(smv)
+          print("TTL media patch applied!")
+          EOF
+
           cat << 'EOF' >> TMessagesProj/build.gradle
           android {
               signingConfigs {
@@ -48,7 +104,7 @@ jobs:
       - name: Build arm64 Release APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleAfatRelease
+          ./gradlew assembleAfatRelease --max-workers=4
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
