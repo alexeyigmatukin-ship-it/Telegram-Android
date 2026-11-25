@@ -1,4 +1,4 @@
-herename: Build Custom Stealth Client APK
+name: Build Custom Stealth Client APK
 
 on:
   workflow_dispatch:
