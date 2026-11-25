@@ -45,7 +45,7 @@ jobs:
           NEW_NAME: "Notes"
         run: |
           python3 - << 'EOF'
-          import os, re, glob
+          import os, re, glob, json, copy
 
           api_id = os.environ["API_ID"]
           api_hash = os.environ["API_HASH"]
@@ -70,15 +70,28 @@ jobs:
               with open(gf_path, "w", encoding="utf-8") as f:
                   f.write(gf)
 
-          # 2.1 Update google-services.json so processAfatReleaseGoogleServices matches new package name
+          # Update google-services.json keeping BOTH org.telegram.messenger and new_pkg
           for gs_path in glob.glob("**/google-services.json", recursive=True):
               with open(gs_path, "r", encoding="utf-8") as f:
-                  gs = f.read()
-              gs = gs.replace('"package_name": "org.telegram.messenger"', f'"package_name": "{new_pkg}"')
-              gs = gs.replace('"package_name": "org.telegram.messenger.beta"', f'"package_name": "{new_pkg}"')
-              gs = gs.replace('"package_name": "org.telegram.messenger.web"', f'"package_name": "{new_pkg}"')
+                  gs = json.load(f)
+              if "client" in gs and isinstance(gs["client"], list):
+                  new_clients = []
+                  existing_pkgs = set()
+                  for client in gs["client"]:
+                      pkg = client.get("client_info", {}).get("android_client_info", {}).get("package_name", "")
+                      existing_pkgs.add(pkg)
+                      new_clients.append(client)
+                  for client in list(gs["client"]):
+                      pkg = client.get("client_info", {}).get("android_client_info", {}).get("package_name", "")
+                      if pkg == "org.telegram.messenger" and new_pkg not in existing_pkgs:
+                          cloned = copy.deepcopy(client)
+                          cloned["client_info"]["android_client_info"]["package_name"] = new_pkg
+                          new_clients.append(cloned)
+                          existing_pkgs.add(new_pkg)
+                  gs["client"] = new_clients
               with open(gs_path, "w", encoding="utf-8") as f:
-                  f.write(gs)
+                  json.dump(gs, f, indent=2)
+              print(f"Updated {gs_path} with both package names!")
 
           for mf_path in glob.glob("**/AndroidManifest.xml", recursive=True):
               with open(mf_path, "r", encoding="utf-8") as f:
@@ -97,17 +110,26 @@ jobs:
 
           # 3. Stock Mode & Graphics Config Helper
           h_dir = "TMessagesProj/src/main/java/org/telegram/messenger"
-          custom_cfg = (
-              "package org.telegram.messenger;\n"
-              "import android.content.Context;\n"
-              "import android.content.SharedPreferences;\n"
-              "public class CustomConfig {\n"
-              "    private static SharedPreferences getPrefs() { return ApplicationLoader.applicationContext.getSharedPreferences(\"my_custom_prefs\", Context.MODE_PRIVATE); }\n"
-              "    public static boolean isStockMode(long dialogId) { return getPrefs().getBoolean(\"stock_\" + dialogId, false); }\n"
-              "    public static void toggleStockMode(long dialogId) { getPrefs().edit().putBoolean(\"stock_\" + dialogId, !isStockMode(dialogId)).apply(); }\n"
-              "    public static boolean isForce120Hz() { return getPrefs().getBoolean(\"force_120hz\", true); }\n"
-              "}\n"
-          )
+          custom_cfg = """package org.telegram.messenger;
+
+          import android.content.Context;
+          import android.content.SharedPreferences;
+
+          public class CustomConfig {
+              private static SharedPreferences getPrefs() {
+                  return ApplicationLoader.applicationContext.getSharedPreferences("my_custom_prefs", Context.MODE_PRIVATE);
+              }
+              public static boolean isStockMode(long dialogId) {
+                  return getPrefs().getBoolean("stock_" + dialogId, false);
+              }
+              public static void toggleStockMode(long dialogId) {
+                  getPrefs().edit().putBoolean("stock_" + dialogId, !isStockMode(dialogId)).apply();
+              }
+              public static boolean isForce120Hz() {
+                  return getPrefs().getBoolean("force_120hz", true);
+              }
+          }
+          """
           with open(f"{h_dir}/CustomConfig.java", "w", encoding="utf-8") as f:
               f.write(custom_cfg)
 
@@ -123,6 +145,7 @@ jobs:
           )
           with open(ms_path, "w", encoding="utf-8") as f:
               f.write(ms)
+          print("Anti-delete patch applied!")
 
           # 5. Save Disposable Media / TTL (disabled in stock mode for specific chat)
           smv_path = "TMessagesProj/src/main/java/org/telegram/ui/SecretMediaViewer.java"
@@ -131,8 +154,9 @@ jobs:
           smv = smv.replace("currentMessageObject.isSecretMedia()", "(currentMessageObject != null && CustomConfig.isStockMode(currentMessageObject.getDialogId()) && currentMessageObject.isSecretMedia())")
           with open(smv_path, "w", encoding="utf-8") as f:
               f.write(smv)
+          print("TTL media patch applied!")
 
-          # 6. Unlock Voice/Round Transcription Button (->A) without Premium
+          # 6. Unlock Transcribe (->A) button for all voice/round messages without Premium
           cmc_path = "TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java"
           if os.path.exists(cmc_path):
               with open(cmc_path, "r", encoding="utf-8") as f:
@@ -145,18 +169,18 @@ jobs:
               )
               with open(cmc_path, "w", encoding="utf-8") as f:
                   f.write(cmc)
+              print("Transcribe button unlocked!")
 
-          # 7. Visible Stock Mode Toggle in Profile Menu
+          # 7. Visible Stock-Mode toggle in ProfileActivity menu
           pa_path = "TMessagesProj/src/main/java/org/telegram/ui/ProfileActivity.java"
           if os.path.exists(pa_path):
               with open(pa_path, "r", encoding="utf-8") as f:
                   pa = f.read()
-              if "otherItem.addSubItem(" in pa:
-                  pa = pa.replace(
-                      "otherItem.addSubItem(",
-                      'otherItem.addSubItem(9991, org.telegram.messenger.R.drawable.msg_settings, "Сток-режим (вкл/выкл)");\n                    otherItem.addSubItem(',
-                      1
-                  )
+              pa = pa.replace(
+                  "otherItem.addSubItem(",
+                  'otherItem.addSubItem(9991, org.telegram.messenger.R.drawable.msg_settings, "Сток-режим (вкл/выкл)");\n                    otherItem.addSubItem(',
+                  1
+              )
               pa = re.sub(
                   r'public void onItemClick\s*\(\s*int id\s*\)\s*\{',
                   r'\g<0>\n                if (id == 9991) { org.telegram.messenger.CustomConfig.toggleStockMode(getDialogId()); org.telegram.ui.Components.BulletinFactory.of(ProfileActivity.this).createSimpleBulletin(org.telegram.messenger.R.raw.ic_ban, org.telegram.messenger.CustomConfig.isStockMode(getDialogId()) ? "Сток-режим ВКЛ" : "Сток-режим ВЫКЛ").show(); return; }',
@@ -165,6 +189,7 @@ jobs:
               )
               with open(pa_path, "w", encoding="utf-8") as f:
                   f.write(pa)
+              print("ProfileActivity Stock-Mode menu injected!")
 
           # 8. Graphics: Force 120Hz Refresh Rate
           au_path = f"{h_dir}/AndroidUtilities.java"
@@ -173,6 +198,7 @@ jobs:
           au = au.replace("screenRefreshRate = 60;", "screenRefreshRate = CustomConfig.isForce120Hz() ? 120 : 60;")
           with open(au_path, "w", encoding="utf-8") as f:
               f.write(au)
+          print("120Hz graphics patch applied!")
           EOF
 
       - name: Integrate Static Native Whisper.cpp (small-q5_1)
@@ -260,15 +286,16 @@ jobs:
               cm = f.read()
           m = re.search(r'add_library\(\s*(tmessages\.\d+)', cm)
           tgt = m.group(1) if m else "tmessages.49"
-          addition = (
-              "\nset(BUILD_SHARED_LIBS OFF CACHE BOOL \"\" FORCE)\n"
-              "set(WHISPER_BUILD_TESTS OFF CACHE BOOL \"\" FORCE)\n"
-              "set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL \"\" FORCE)\n"
-              "add_subdirectory(whisper)\n"
-              f"target_sources({tgt} PRIVATE whisper_jni.cpp)\n"
-              f"target_include_directories({tgt} PRIVATE whisper/include whisper/ggml/include)\n"
-              f"target_link_libraries({tgt} whisper)\n"
-          )
+          print(f"Detected CMake target: {tgt}")
+          addition = f"""
+          set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+          set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+          set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+          add_subdirectory(whisper)
+          target_sources({tgt} PRIVATE whisper_jni.cpp)
+          target_include_directories({tgt} PRIVATE whisper/include whisper/ggml/include)
+          target_link_libraries({tgt} whisper)
+          """
           with open(cm_path, "w", encoding="utf-8") as f:
               f.write(cm + addition)
           EOF
@@ -319,26 +346,25 @@ jobs:
           mc_path = "TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java"
           with open(mc_path, "r", encoding="utf-8") as f:
               mc = f.read()
-          hook = (
-              "public void transcribeAudio(MessageObject messageObject) {\n"
-              "        if (messageObject != null) {\n"
-              "            Utilities.globalQueue.postRunnable(() -> {\n"
-              "                java.io.File file = FileLoader.getInstance(currentAccount).getPathToMessage(messageObject.messageOwner);\n"
-              "                if (file != null && file.exists()) {\n"
-              "                    String text = WhisperHelper.transcribeFile(file);\n"
-              "                    AndroidUtilities.runOnUIThread(() -> {\n"
-              "                        messageObject.messageOwner.voiceTranscription = text;\n"
-              "                        messageObject.messageOwner.voiceTranscriptionOpen = true;\n"
-              "                        NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.voiceTranscriptionUpdate, messageObject, null, text, true, true);\n"
-              "                    });\n"
-              "                }\n"
-              "            });\n"
-              "            return;\n"
-              "        }"
-          )
+          hook = '''public void transcribeAudio(MessageObject messageObject) {
+                  if (messageObject != null) {
+                      Utilities.globalQueue.postRunnable(() -> {
+                          java.io.File file = FileLoader.getInstance(currentAccount).getPathToMessage(messageObject.messageOwner);
+                          if (file != null && file.exists()) {
+                              String text = WhisperHelper.transcribeFile(file);
+                              AndroidUtilities.runOnUIThread(() -> {
+                                  messageObject.messageOwner.voiceTranscription = text;
+                                  messageObject.messageOwner.voiceTranscriptionOpen = true;
+                                  NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.voiceTranscriptionUpdate, messageObject, null, text, true, true);
+                              });
+                          }
+                      });
+                      return;
+                  }'''
           mc = re.sub(r'public void transcribeAudio\s*\(\s*MessageObject messageObject\s*\)\s*\{', hook, mc, count=1)
           with open(mc_path, "w", encoding="utf-8") as f:
               f.write(mc)
+          print("Whisper hook injected into MessagesController!")
           EOF
 
           cat << 'EOF' >> TMessagesProj/build.gradle
@@ -366,9 +392,10 @@ jobs:
 
       - name: Verify APK Package Name
         run: |
-          APK_PATH=$(find TMessagesProj_App/build/outputs/apk/afat/release -name "*.apk" | head -n 1)
-          AAPT2=$(find $ANDROID_HOME/build-tools -name "aapt2" | head -n 1)
-          $AAPT2 dump badging "$APK_PATH" | grep "package:"
+          APK_FILE=$(find TMessagesProj_App/build/outputs/apk/afat/release/ -name "*.apk" | head -n 1)
+          echo "Built APK: $APK_FILE"
+          AAPT2=$(find $ANDROID_HOME/build-tools -name "aapt2" | sort -V | tail -n 1)
+          $AAPT2 dump badging "$APK_FILE" | grep "package:"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
