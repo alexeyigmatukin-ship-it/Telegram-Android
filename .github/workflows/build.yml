@@ -25,13 +25,14 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
             TMessagesProj/.cxx
-          key: ${{ runner.os }}-gradle-stealth-v3-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/CMakeLists.txt') }}
+          key: ${{ runner.os }}-gradle-stealth-v5-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-gradle-stealth-v3-
+            ${{ runner.os }}-gradle-stealth-v5-
 
       - name: Clone whisper.cpp
         run: |
-          git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git TMessagesProj/jni/whisper
+          REPO_HOST="github.com"
+          git clone --depth 1 "https://${REPO_HOST}/ggerganov/whisper.cpp.git" TMessagesProj/jni/whisper
 
       - name: Decode Keystore
         run: |
@@ -71,10 +72,21 @@ jobs:
           for mf_path in glob.glob("**/AndroidManifest.xml", recursive=True):
               with open(mf_path, "r", encoding="utf-8") as f:
                   mf = f.read()
-              for suff in ["provider", "call_provider", "notification_image_provider", "permission.MAPS_RECEIVE", "DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"]:
-                  mf = mf.replace(f"org.telegram.messenger.{suff}", f"{new_pkg}.{suff}")
+              mf = re.sub(r'org\.telegram\.messenger\.(provider|call_provider|notification_image_provider|DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION|permission\.[A-Za-z0-9_]+)', rf'{new_pkg}.\1', mf)
               with open(mf_path, "w", encoding="utf-8") as f:
                   f.write(mf)
+
+          for java_file in glob.glob("TMessagesProj/src/main/java/**/*.java", recursive=True):
+              with open(java_file, "r", encoding="utf-8", errors="ignore") as f:
+                  jf = f.read()
+              orig = jf
+              jf = jf.replace('"org.telegram.messenger.provider"', f'"{new_pkg}.provider"')
+              jf = jf.replace('"org.telegram.messenger.call_provider"', f'"{new_pkg}.call_provider"')
+              jf = jf.replace('"org.telegram.messenger.notification_image_provider"', f'"{new_pkg}.notification_image_provider"')
+              jf = jf.replace('ApplicationLoader.getApplicationId() + ".provider"', f'"{new_pkg}.provider"')
+              if jf != orig:
+                  with open(java_file, "w", encoding="utf-8") as f:
+                      f.write(jf)
 
           for xml_path in glob.glob("TMessagesProj/src/main/res/values*/strings.xml"):
               with open(xml_path, "r", encoding="utf-8") as f:
@@ -112,6 +124,7 @@ jobs:
           t_del = "public void markMessagesAsDeleted(final long dialogId, final ArrayList<Integer> messages, boolean channel, boolean scheduled, int deleteDate, int taskId) {"
           if t_del in ms:
               ms = ms.replace(t_del, t_del + "\n        if (!CustomConfig.isStockMode(dialogId)) return;")
+              print("Anti-delete patch applied!")
           with open(ms_path, "w", encoding="utf-8") as f:
               f.write(ms)
 
@@ -121,6 +134,7 @@ jobs:
           smv = smv.replace("currentMessageObject.isSecretMedia()", "(currentMessageObject != null && CustomConfig.isStockMode(currentMessageObject.getDialogId()) && currentMessageObject.isSecretMedia())")
           with open(smv_path, "w", encoding="utf-8") as f:
               f.write(smv)
+          print("TTL media patch applied!")
 
           au_path = f"{h_dir}/AndroidUtilities.java"
           with open(au_path, "r", encoding="utf-8") as f:
@@ -128,9 +142,10 @@ jobs:
           au = au.replace("screenRefreshRate = 60;", "screenRefreshRate = CustomConfig.isForce120Hz() ? 120 : 60;")
           with open(au_path, "w", encoding="utf-8") as f:
               f.write(au)
+          print("120Hz graphics patch applied!")
           EOF
 
-      - name: Integrate Native Whisper.cpp (small-q5_1)
+      - name: Integrate Static Whisper.cpp (small-q5_1)
         run: |
           cat << 'EOF' > TMessagesProj/jni/whisper_jni.cpp
           #include <jni.h>
@@ -156,6 +171,7 @@ jobs:
               if (stream_idx < 0) { avformat_close_input(&fmt_ctx); return false; }
               AVStream* stream = fmt_ctx->streams[stream_idx];
               const AVCodec* dec = avcodec_find_decoder(stream->codecpar->codec_id);
+              if (!dec) { avformat_close_input(&fmt_ctx); return false; }
               AVCodecContext* dec_ctx = avcodec_alloc_context3(dec);
               avcodec_parameters_to_context(dec_ctx, stream->codecpar);
               if (avcodec_open2(dec_ctx, dec, nullptr) < 0) { avcodec_free_context(&dec_ctx); avformat_close_input(&fmt_ctx); return false; }
@@ -221,14 +237,17 @@ jobs:
               cm = f.read()
           m = re.search(r'add_library\(\s*(tmessages\.\d+)', cm)
           tgt = m.group(1) if m else "tmessages.49"
-          addition = f"""
-          set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-          set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-          add_subdirectory(whisper)
-          target_sources({tgt} PRIVATE whisper_jni.cpp)
-          target_include_directories({tgt} PRIVATE whisper/include whisper/ggml/include)
-          target_link_libraries({tgt} whisper)
-          """
+          print(f"Detected CMake target: {tgt}")
+          addition = (
+              "\nset(BUILD_SHARED_LIBS OFF CACHE BOOL \"\" FORCE)\n"
+              "set(GGML_SHARED OFF CACHE BOOL \"\" FORCE)\n"
+              "set(WHISPER_BUILD_TESTS OFF CACHE BOOL \"\" FORCE)\n"
+              "set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL \"\" FORCE)\n"
+              "add_subdirectory(whisper)\n"
+              f"target_sources({tgt} PRIVATE whisper_jni.cpp)\n"
+              f"target_include_directories({tgt} PRIVATE whisper/include whisper/ggml/include)\n"
+              f"target_link_libraries({tgt} whisper)\n"
+          )
           with open(cm_path, "w", encoding="utf-8") as f:
               f.write(cm + addition)
           EOF
@@ -244,7 +263,8 @@ jobs:
 
           public class WhisperHelper {
               private static final String MODEL_NAME = "ggml-small-q5_1.bin";
-              private static final String MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin";
+              private static final String MODEL_HOST = "huggingface.co";
+              private static final String MODEL_URL = "https://" + MODEL_HOST + "/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin";
 
               public static native String transcribeNative(String modelPath, String audioPath);
 
@@ -297,6 +317,7 @@ jobs:
               mc = mc.replace("public void transcribeAudio(MessageObject messageObject) {", hook, 1)
               with open(mc_path, "w", encoding="utf-8") as f:
                   f.write(mc)
+              print("Whisper hook injected into MessagesController!")
           EOF
 
           cat << 'EOF' >> TMessagesProj/build.gradle
@@ -320,7 +341,7 @@ jobs:
       - name: Build arm64 Release APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleAfatRelease --max-workers=4
+          ./gradlew :TMessagesProj_App:assembleAfatRelease --max-workers=4
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
