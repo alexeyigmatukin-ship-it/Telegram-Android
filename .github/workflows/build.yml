@@ -25,15 +25,17 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
             TMessagesProj/.cxx
-          key: ${{ runner.os }}-gradle-stealth-v1-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/CMakeLists.txt') }}
+          key: ${{ runner.os }}-gradle-stealth-v2-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-gradle-stealth-v1-
+            ${{ runner.os }}-gradle-stealth-v2-
 
       - name: Clone whisper.cpp
-        run: git clone --depth 1 https://github.com TMessagesProj/jni/whisper
+        run: |
+          git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git TMessagesProj/jni/whisper
 
       - name: Decode Keystore
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > TMessagesProj/my_telegram.jks
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > TMessagesProj/my_telegram.jks
 
       - name: Apply Stealth and Feature Patches
         env:
@@ -45,78 +47,112 @@ jobs:
           python3 - << 'EOF'
           import os, re, glob
 
-          api_id, api_hash = os.environ["API_ID"], os.environ["API_HASH"]
-          new_pkg, new_name = os.environ["NEW_PKG"], os.environ["NEW_NAME"]
+          api_id = os.environ["API_ID"]
+          api_hash = os.environ["API_HASH"]
+          new_pkg = os.environ["NEW_PKG"]
+          new_name = os.environ["NEW_NAME"]
 
+          # 1. API Keys
           bv_path = "TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java"
-          bv = open(bv_path, encoding="utf-8").read()
+          with open(bv_path, "r", encoding="utf-8") as f:
+              bv = f.read()
           bv = re.sub(r'public static int APP_ID = .*?;', f'public static int APP_ID = {api_id};', bv)
           bv = re.sub(r'public static String APP_HASH = .*?;', f'public static String APP_HASH = "{api_hash}";', bv)
-          open(bv_path, "w", encoding="utf-8").write(bv)
+          with open(bv_path, "w", encoding="utf-8") as f:
+              f.write(bv)
 
+          # 2. Complete Package ID & Authorities Replacement (Stealth mode)
           for gf_path in glob.glob("**/build.gradle", recursive=True):
-              gf = open(gf_path, encoding="utf-8").read()
+              with open(gf_path, "r", encoding="utf-8") as f:
+                  gf = f.read()
               gf = re.sub(r'applicationId\s+"org\.telegram\.messenger[^"]*"', f'applicationId "{new_pkg}"', gf)
               gf = re.sub(r'applicationIdSuffix\s+"[^"]*"', '', gf)
-              open(gf_path, "w", encoding="utf-8").write(gf)
+              with open(gf_path, "w", encoding="utf-8") as f:
+                  f.write(gf)
 
           for mf_path in glob.glob("**/AndroidManifest.xml", recursive=True):
-              mf = open(mf_path, encoding="utf-8").read()
+              with open(mf_path, "r", encoding="utf-8") as f:
+                  mf = f.read()
               for suff in ["provider", "call_provider", "notification_image_provider", "permission.MAPS_RECEIVE", "DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"]:
                   mf = mf.replace(f"org.telegram.messenger.{suff}", f"{new_pkg}.{suff}")
-              open(mf_path, "w", encoding="utf-8").write(mf)
+              with open(mf_path, "w", encoding="utf-8") as f:
+                  f.write(mf)
 
           for xml_path in glob.glob("TMessagesProj/src/main/res/values*/strings.xml"):
-              xml = open(xml_path, encoding="utf-8").read()
+              with open(xml_path, "r", encoding="utf-8") as f:
+                  xml = f.read()
               xml = re.sub(r'<string name="AppName">[^<]*</string>', f'<string name="AppName">{new_name}</string>', xml)
-              open(xml_path, "w", encoding="utf-8").write(xml)
+              with open(xml_path, "w", encoding="utf-8") as f:
+                  f.write(xml)
 
+          # 3. Stock Mode & Graphics Config Helper
           h_dir = "TMessagesProj/src/main/java/org/telegram/messenger"
-          open(f"{h_dir}/CustomConfig.java", "w", encoding="utf-8").write('''package org.telegram.messenger;
+          with open(f"{h_dir}/CustomConfig.java", "w", encoding="utf-8") as f:
+              f.write('''package org.telegram.messenger;
+
           import android.content.Context;
           import android.content.SharedPreferences;
+
           public class CustomConfig {
               private static SharedPreferences getPrefs() {
                   return ApplicationLoader.applicationContext.getSharedPreferences("my_custom_prefs", Context.MODE_PRIVATE);
               }
-              public static boolean isStockMode(long dialogId) { return getPrefs().getBoolean("stock_" + dialogId, false); }
-              public static void toggleStockMode(long dialogId) { getPrefs().edit().putBoolean("stock_" + dialogId, !isStockMode(dialogId)).apply(); }
-              public static boolean isForce120Hz() { return getPrefs().getBoolean("force_120hz", true); }
+              public static boolean isStockMode(long dialogId) {
+                  return getPrefs().getBoolean("stock_" + dialogId, false);
+              }
+              public static void toggleStockMode(long dialogId) {
+                  getPrefs().edit().putBoolean("stock_" + dialogId, !isStockMode(dialogId)).apply();
+              }
+              public static boolean isForce120Hz() {
+                  return getPrefs().getBoolean("force_120hz", true);
+              }
           }
           ''')
 
+          # 4. Anti-Delete (disabled in stock mode for specific chat)
           ms_path = f"{h_dir}/MessagesStorage.java"
-          ms = open(ms_path, encoding="utf-8").read()
+          with open(ms_path, "r", encoding="utf-8") as f:
+              ms = f.read()
           t_del = "public void markMessagesAsDeleted(final long dialogId, final ArrayList<Integer> messages, boolean channel, boolean scheduled, int deleteDate, int taskId) {"
           if t_del in ms:
               ms = ms.replace(t_del, t_del + "\n        if (!CustomConfig.isStockMode(dialogId)) return;")
-          open(ms_path, "w", encoding="utf-8").write(ms)
+          with open(ms_path, "w", encoding="utf-8") as f:
+              f.write(ms)
 
+          # 5. Save Disposable Media / TTL (disabled in stock mode for specific chat)
           smv_path = "TMessagesProj/src/main/java/org/telegram/ui/SecretMediaViewer.java"
-          smv = open(smv_path, encoding="utf-8").read()
+          with open(smv_path, "r", encoding="utf-8") as f:
+              smv = f.read()
           smv = smv.replace("currentMessageObject.isSecretMedia()", "(currentMessageObject != null && CustomConfig.isStockMode(currentMessageObject.getDialogId()) && currentMessageObject.isSecretMedia())")
-          open(smv_path, "w", encoding="utf-8").write(smv)
+          with open(smv_path, "w", encoding="utf-8") as f:
+              f.write(smv)
 
+          # 6. Graphics: Force 120Hz Refresh Rate
           au_path = f"{h_dir}/AndroidUtilities.java"
-          au = open(au_path, encoding="utf-8").read()
+          with open(au_path, "r", encoding="utf-8") as f:
+              au = f.read()
           au = au.replace("screenRefreshRate = 60;", "screenRefreshRate = CustomConfig.isForce120Hz() ? 120 : 60;")
-          open(au_path, "w", encoding="utf-8").write(au)
+          with open(au_path, "w", encoding="utf-8") as f:
+              f.write(au)
           EOF
 
-      - name: Integrate Native Whisper.cpp
+      - name: Integrate Native Whisper.cpp (small-q5_1)
         run: |
           cat << 'EOF' > TMessagesProj/jni/whisper_jni.cpp
           #include <jni.h>
           #include <string>
           #include <vector>
           #include "whisper/include/whisper.h"
+
           extern "C" {
           #include <libavformat/avformat.h>
           #include <libavcodec/avcodec.h>
           #include <libswresample/swresample.h>
           #include <libavutil/opt.h>
           }
+
           static struct whisper_context *g_ctx = nullptr;
+
           static bool decode_audio_to_pcm16(const char* path, std::vector<float>& pcmf32) {
               AVFormatContext* fmt_ctx = nullptr;
               if (avformat_open_input(&fmt_ctx, path, nullptr, nullptr) < 0) return false;
@@ -128,6 +164,7 @@ jobs:
               AVCodecContext* dec_ctx = avcodec_alloc_context3(dec);
               avcodec_parameters_to_context(dec_ctx, stream->codecpar);
               if (avcodec_open2(dec_ctx, dec, nullptr) < 0) { avcodec_free_context(&dec_ctx); avformat_close_input(&fmt_ctx); return false; }
+
               SwrContext* swr = swr_alloc();
               av_opt_set_int(swr, "in_channel_layout", dec_ctx->channel_layout ? dec_ctx->channel_layout : av_get_default_channel_layout(dec_ctx->channels), 0);
               av_opt_set_int(swr, "in_sample_rate", dec_ctx->sample_rate, 0);
@@ -136,6 +173,7 @@ jobs:
               av_opt_set_int(swr, "out_sample_rate", 16000, 0);
               av_opt_set_sample_fmt(swr, "out_sample_fmt", AV_SAMPLE_FMT_FLT, 0);
               swr_init(swr);
+
               AVPacket* pkt = av_packet_alloc();
               AVFrame* frame = av_frame_alloc();
               while (av_read_frame(fmt_ctx, pkt) >= 0) {
@@ -153,6 +191,7 @@ jobs:
               av_frame_free(&frame); av_packet_free(&pkt); swr_free(&swr); avcodec_free_context(&dec_ctx); avformat_close_input(&fmt_ctx);
               return !pcmf32.empty();
           }
+
           extern "C" JNIEXPORT jstring JNICALL
           Java_org_telegram_messenger_WhisperHelper_transcribeNative(JNIEnv* env, jclass clazz, jstring modelPath, jstring audioPath) {
               const char* m_path = env->GetStringUTFChars(modelPath, nullptr);
@@ -164,7 +203,131 @@ jobs:
               if (g_ctx == nullptr) { env->ReleaseStringUTFChars(modelPath, m_path); env->ReleaseStringUTFChars(audioPath, a_path); return env->NewStringUTF("Ошибка модели"); }
               std::vector<float> pcmf32;
               if (!decode_audio_to_pcm16(a_path, pcmf32)) { env->ReleaseStringUTFChars(modelPath, m_path); env->ReleaseStringUTFChars(audioPath, a_path); return env->NewStringUTF("Ошибка аудио"); }
+
               whisper_full_params wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
-              wparams.language = "ru"; wparams.n_threads = 6; wparams.print_progress = false; wparams.print_realtime = false;
+              wparams.language = "ru";
+              wparams.n_threads = 6;
+              wparams.print_progress = false;
+              wparams.print_realtime = false;
+
               if (whisper_full(g_ctx, wparams, pcmf32.data(), pcmf32.size()) != 0) { env->ReleaseStringUTFChars(modelPath, m_path); env->ReleaseStringUTFChars(audioPath, a_path); return env->NewStringUTF("Ошибка распознавания"); }
               std::string result;
+              for (int i = 0; i < whisper_full_n_segments(g_ctx); ++i) result += whisper_full_get_segment_text(g_ctx, i);
+              env->ReleaseStringUTFChars(modelPath, m_path); env->ReleaseStringUTFChars(audioPath, a_path);
+              return env->NewStringUTF(result.c_str());
+          }
+          EOF
+
+          python3 - << 'EOF'
+          import re
+          cm_path = "TMessagesProj/jni/CMakeLists.txt"
+          with open(cm_path, "r", encoding="utf-8") as f:
+              cm = f.read()
+          m = re.search(r'add_library\(\s*(tmessages\.\d+)', cm)
+          tgt = m.group(1) if m else "tmessages.49"
+          addition = f"""
+          set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+          set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+          add_subdirectory(whisper)
+          target_sources({tgt} PRIVATE whisper_jni.cpp)
+          target_include_directories({tgt} PRIVATE whisper/include whisper/ggml/include)
+          target_link_libraries({tgt} whisper)
+          """
+          with open(cm_path, "w", encoding="utf-8") as f:
+              f.write(cm + addition)
+          EOF
+
+          cat << 'EOF' > TMessagesProj/src/main/java/org/telegram/messenger/WhisperHelper.java
+          package org.telegram.messenger;
+
+          import java.io.File;
+          import java.io.FileOutputStream;
+          import java.io.InputStream;
+          import java.net.HttpURLConnection;
+          import java.net.URL;
+
+          public class WhisperHelper {
+              private static final String MODEL_NAME = "ggml-small-q5_1.bin";
+              private static final String MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin";
+
+              public static native String transcribeNative(String modelPath, String audioPath);
+
+              public static String transcribeFile(File audioFile) {
+                  try {
+                      File dir = new File(ApplicationLoader.applicationContext.getFilesDir(), "whisper");
+                      if (!dir.exists()) dir.mkdirs();
+                      File model = new File(dir, MODEL_NAME);
+                      if (!model.exists() || model.length() < 150000000L) {
+                          HttpURLConnection conn = (HttpURLConnection) new URL(MODEL_URL).openConnection();
+                          conn.setInstanceFollowRedirects(true);
+                          conn.setConnectTimeout(15000);
+                          conn.setReadTimeout(60000);
+                          try (InputStream in = conn.getInputStream(); FileOutputStream out = new FileOutputStream(model)) {
+                              byte[] buf = new byte[8192];
+                              int len;
+                              while ((len = in.read(buf)) != -1) {
+                                  out.write(buf, 0, len);
+                              }
+                          }
+                      }
+                      return transcribeNative(model.getAbsolutePath(), audioFile.getAbsolutePath());
+                  } catch (Exception e) {
+                      return "Ошибка Whisper: " + e.getMessage();
+                  }
+              }
+          }
+          EOF
+
+          python3 - << 'EOF'
+          mc_path = "TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java"
+          with open(mc_path, "r", encoding="utf-8") as f:
+              mc = f.read()
+          hook = '''public void transcribeAudio(MessageObject messageObject) {
+                  if (messageObject != null) {
+                      Utilities.globalQueue.postRunnable(() -> {
+                          java.io.File file = FileLoader.getInstance(currentAccount).getPathToMessage(messageObject.messageOwner);
+                          if (file != null && file.exists()) {
+                              String text = WhisperHelper.transcribeFile(file);
+                              AndroidUtilities.runOnUIThread(() -> {
+                                  messageObject.messageOwner.voiceTranscription = text;
+                                  messageObject.messageOwner.voiceTranscriptionOpen = true;
+                                  NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.voiceTranscriptionUpdate, messageObject, null, text, true, true);
+                              });
+                          }
+                      });
+                      return;
+                  }'''
+          if "public void transcribeAudio(MessageObject messageObject) {" in mc:
+              mc = mc.replace("public void transcribeAudio(MessageObject messageObject) {", hook, 1)
+              with open(mc_path, "w", encoding="utf-8") as f:
+                  f.write(mc)
+          EOF
+
+          cat << 'EOF' >> TMessagesProj/build.gradle
+          android {
+              signingConfigs {
+                  release {
+                      storeFile file("my_telegram.jks")
+                      storePassword "${{ secrets.KEYSTORE_PASSWORD }}"
+                      keyAlias "${{ secrets.KEY_ALIAS }}"
+                      keyPassword "${{ secrets.KEY_PASSWORD }}"
+                  }
+              }
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.release
+                  }
+              }
+          }
+          EOF
+
+      - name: Build arm64 Release APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleAfatRelease --max-workers=4
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NotesClient-arm64
+          path: TMessagesProj_App/build/outputs/apk/afat/release/*.apk
