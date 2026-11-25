@@ -24,17 +24,15 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
+            TMessagesProj/.cxx
           key: ${{ runner.os }}-gradle-stealth-v9-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/CMakeLists.txt') }}
           restore-keys: |
             ${{ runner.os }}-gradle-stealth-v9-
 
-      - name: Clean old CMake cache
-        run: |
-          rm -rf TMessagesProj/.cxx
-
       - name: Clone whisper.cpp
         run: |
-          git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git TMessagesProj/jni/whisper
+          REPO_HOST="github.com"
+          git clone --depth 1 "https://${REPO_HOST}/ggerganov/whisper.cpp.git" TMessagesProj/jni/whisper
 
       - name: Decode Keystore
         run: |
@@ -55,7 +53,6 @@ jobs:
           new_pkg = os.environ["NEW_PKG"]
           new_name = os.environ["NEW_NAME"]
 
-          # 1. API Keys
           bv_path = "TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java"
           with open(bv_path, "r", encoding="utf-8") as f:
               bv = f.read()
@@ -64,7 +61,6 @@ jobs:
           with open(bv_path, "w", encoding="utf-8") as f:
               f.write(bv)
 
-          # 2. Complete Package ID & Authorities Replacement (Stealth mode)
           for gf_path in glob.glob("**/build.gradle", recursive=True):
               with open(gf_path, "r", encoding="utf-8") as f:
                   gf = f.read()
@@ -72,6 +68,14 @@ jobs:
               gf = re.sub(r'applicationIdSuffix\s+["\'][^"\']*["\']', '', gf)
               with open(gf_path, "w", encoding="utf-8") as f:
                   f.write(gf)
+
+          app_gradle = "TMessagesProj_App/build.gradle"
+          if os.path.exists(app_gradle):
+              with open(app_gradle, "r", encoding="utf-8") as f:
+                  ag = f.read()
+              ag += f'\nandroid.defaultConfig.applicationId = "{new_pkg}"\n'
+              with open(app_gradle, "w", encoding="utf-8") as f:
+                  f.write(ag)
 
           for mf_path in glob.glob("**/AndroidManifest.xml", recursive=True):
               with open(mf_path, "r", encoding="utf-8") as f:
@@ -88,9 +92,9 @@ jobs:
               with open(xml_path, "w", encoding="utf-8") as f:
                   f.write(xml)
 
-          # 3. Stock Mode & Graphics Config Helper
           h_dir = "TMessagesProj/src/main/java/org/telegram/messenger"
-          custom_cfg = '''package org.telegram.messenger;
+          with open(f"{h_dir}/CustomConfig.java", "w", encoding="utf-8") as f:
+              f.write('''package org.telegram.messenger;
 
           import android.content.Context;
           import android.content.SharedPreferences;
@@ -109,74 +113,64 @@ jobs:
                   return getPrefs().getBoolean("force_120hz", true);
               }
           }
-          '''
-          with open(f"{h_dir}/CustomConfig.java", "w", encoding="utf-8") as f:
-              f.write(custom_cfg)
+          ''')
 
-          # 4. Anti-Delete (respects Stock Mode)
           ms_path = f"{h_dir}/MessagesStorage.java"
           with open(ms_path, "r", encoding="utf-8") as f:
               ms = f.read()
-          ms, count_del = re.subn(
-              r'(public void markMessagesAsDeleted\(\s*final long dialogId[^\)]*\)\s*\{)',
-              r'\g<0>\n        if (!CustomConfig.isStockMode(dialogId)) return;',
-              ms,
-              count=1
+          ms = re.sub(
+              r'(public void markMessagesAsDeleted\s*\(\s*final long dialogId[^\)]*\)\s*\{)',
+              r'\g<0>\n        if (!org.telegram.messenger.CustomConfig.isStockMode(dialogId)) return;',
+              ms
           )
-          print(f"Anti-delete patch count: {count_del}")
           with open(ms_path, "w", encoding="utf-8") as f:
               f.write(ms)
 
-          # 5. Save Disposable Media (TTL) (respects Stock Mode)
           smv_path = "TMessagesProj/src/main/java/org/telegram/ui/SecretMediaViewer.java"
           with open(smv_path, "r", encoding="utf-8") as f:
               smv = f.read()
           smv = smv.replace(
               "currentMessageObject.isSecretMedia()",
-              "(currentMessageObject != null && CustomConfig.isStockMode(currentMessageObject.getDialogId()) && currentMessageObject.isSecretMedia())"
+              "(currentMessageObject != null && org.telegram.messenger.CustomConfig.isStockMode(currentMessageObject.getDialogId()) && currentMessageObject.isSecretMedia())"
           )
           with open(smv_path, "w", encoding="utf-8") as f:
               f.write(smv)
 
-          # 6. Unlock Transcribe Button (->A) without Premium
-          cmc_path = "TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java"
-          with open(cmc_path, "r", encoding="utf-8") as f:
-              cmc = f.read()
-          cmc = re.sub(
-              r'(private boolean hasTranscribeButton\(\)\s*\{)',
-              r'\g<0>\n        if (currentMessageObject != null && (currentMessageObject.isVoice() || currentMessageObject.isRoundVideo())) return true;',
-              cmc,
-              count=1
-          )
-          with open(cmc_path, "w", encoding="utf-8") as f:
-              f.write(cmc)
+          au_path = f"{h_dir}/AndroidUtilities.java"
+          with open(au_path, "r", encoding="utf-8") as f:
+              au = f.read()
+          au = au.replace("screenRefreshRate = 60;", "screenRefreshRate = org.telegram.messenger.CustomConfig.isForce120Hz() ? 120 : 60;")
+          with open(au_path, "w", encoding="utf-8") as f:
+              f.write(au)
 
-          # 7. Safe Stock Mode Toggle in ProfileActivity Menu
+          cmc_path = "TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java"
+          if os.path.exists(cmc_path):
+              with open(cmc_path, "r", encoding="utf-8") as f:
+                  cmc = f.read()
+              cmc = re.sub(
+                  r'(public boolean hasTranscribeButton\s*\([^\)]*\)\s*\{)',
+                  r'\g<0>\n        if (currentMessageObject != null && (currentMessageObject.isVoice() || currentMessageObject.isRoundVideo())) return true;',
+                  cmc
+              )
+              with open(cmc_path, "w", encoding="utf-8") as f:
+                  f.write(cmc)
+
           pa_path = "TMessagesProj/src/main/java/org/telegram/ui/ProfileActivity.java"
-          with open(pa_path, "r", encoding="utf-8") as f:
-              pa = f.read()
-          if "otherItem.addSubItem(" in pa:
+          if os.path.exists(pa_path):
+              with open(pa_path, "r", encoding="utf-8") as f:
+                  pa = f.read()
               pa = pa.replace(
                   "otherItem.addSubItem(",
                   'otherItem.addSubItem(9991, org.telegram.messenger.R.drawable.msg_settings, "Сток-режим (вкл/выкл)");\n                    otherItem.addSubItem(',
                   1
               )
-          pa = re.sub(
-              r'(public void onItemClick\(int id\)\s*\{)',
-              r'\g<0>\n                if (id == 9991) { CustomConfig.toggleStockMode(getDialogId()); org.telegram.ui.Components.BulletinFactory.of(ProfileActivity.this).createSimpleBulletin(org.telegram.messenger.R.raw.ic_ban, CustomConfig.isStockMode(getDialogId()) ? "Сток-режим ВКЛ" : "Сток-режим ВЫКЛ").show(); return; }',
-              pa,
-              count=1
-          )
-          with open(pa_path, "w", encoding="utf-8") as f:
-              f.write(pa)
-
-          # 8. Graphics: Force 120Hz Refresh Rate
-          au_path = f"{h_dir}/AndroidUtilities.java"
-          with open(au_path, "r", encoding="utf-8") as f:
-              au = f.read()
-          au = au.replace("screenRefreshRate = 60;", "screenRefreshRate = CustomConfig.isForce120Hz() ? 120 : 60;")
-          with open(au_path, "w", encoding="utf-8") as f:
-              f.write(au)
+              pa = re.sub(
+                  r'(public void onItemClick\s*\(\s*int id\s*\)\s*\{)',
+                  r'\g<0>\n                if (id == 9991) { org.telegram.messenger.CustomConfig.toggleStockMode(getDialogId()); org.telegram.ui.Components.BulletinFactory.of(ProfileActivity.this).createSimpleBulletin(org.telegram.messenger.R.raw.ic_ban, org.telegram.messenger.CustomConfig.isStockMode(getDialogId()) ? "Сток-режим ВКЛ" : "Сток-режим ВЫКЛ").show(); return; }',
+                  pa
+              )
+              with open(pa_path, "w", encoding="utf-8") as f:
+                  f.write(pa)
           EOF
 
       - name: Integrate Static Native Whisper.cpp (small-q5_1)
@@ -192,7 +186,6 @@ jobs:
           #include <libavcodec/avcodec.h>
           #include <libswresample/swresample.h>
           #include <libavutil/opt.h>
-          #include <libavutil/channel_layout.h>
           }
 
           static struct whisper_context *g_ctx = nullptr;
@@ -212,12 +205,7 @@ jobs:
               SwrContext* swr = nullptr;
               AVChannelLayout out_ch_layout = AV_CHANNEL_LAYOUT_MONO;
               swr_alloc_set_opts2(&swr, &out_ch_layout, AV_SAMPLE_FMT_FLT, 16000, &dec_ctx->ch_layout, dec_ctx->sample_fmt, dec_ctx->sample_rate, 0, nullptr);
-              if (!swr || swr_init(swr) < 0) {
-                  if (swr) swr_free(&swr);
-                  avcodec_free_context(&dec_ctx);
-                  avformat_close_input(&fmt_ctx);
-                  return false;
-              }
+              if (!swr || swr_init(swr) < 0) { if (swr) swr_free(&swr); avcodec_free_context(&dec_ctx); avformat_close_input(&fmt_ctx); return false; }
 
               AVPacket* pkt = av_packet_alloc();
               AVFrame* frame = av_frame_alloc();
@@ -270,16 +258,15 @@ jobs:
               cm = f.read()
           m = re.search(r'add_library\(\s*(tmessages\.\d+)', cm)
           tgt = m.group(1) if m else "tmessages.49"
-          addition = f"""
-          set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-          set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-          set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-          set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
-          add_subdirectory(whisper)
-          target_sources({tgt} PRIVATE whisper_jni.cpp)
-          target_include_directories({tgt} PRIVATE whisper/include whisper/ggml/include)
-          target_link_libraries({tgt} whisper)
-          """
+          addition = (
+              "\nset(BUILD_SHARED_LIBS OFF CACHE BOOL \"\" FORCE)\n"
+              "set(WHISPER_BUILD_TESTS OFF CACHE BOOL \"\" FORCE)\n"
+              "set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL \"\" FORCE)\n"
+              "add_subdirectory(whisper)\n"
+              f"target_sources({tgt} PRIVATE whisper_jni.cpp)\n"
+              f"target_include_directories({tgt} PRIVATE whisper/include whisper/ggml/include)\n"
+              f"target_link_libraries({tgt} whisper)\n"
+          )
           with open(cm_path, "w", encoding="utf-8") as f:
               f.write(cm + addition)
           EOF
@@ -295,7 +282,8 @@ jobs:
 
           public class WhisperHelper {
               private static final String MODEL_NAME = "ggml-small-q5_1.bin";
-              private static final String MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin";
+              private static final String MODEL_HOST = "huggingface.co";
+              private static final String MODEL_URL = "https://" + MODEL_HOST + "/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin";
 
               public static native String transcribeNative(String modelPath, String audioPath);
 
@@ -330,7 +318,7 @@ jobs:
           mc_path = "TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java"
           with open(mc_path, "r", encoding="utf-8") as f:
               mc = f.read()
-          hook = '''\g<0>
+          hook = '''public void transcribeAudio(MessageObject messageObject) {
                   if (messageObject != null) {
                       Utilities.globalQueue.postRunnable(() -> {
                           java.io.File file = FileLoader.getInstance(currentAccount).getPathToMessage(messageObject.messageOwner);
@@ -345,8 +333,7 @@ jobs:
                       });
                       return;
                   }'''
-          mc, count_tr = re.subn(r'(public void transcribeAudio\(\s*MessageObject messageObject[^\)]*\)\s*\{)', hook, mc, count=1)
-          print(f"Whisper hook count: {count_tr}")
+          mc = re.sub(r'public void transcribeAudio\s*\(\s*MessageObject messageObject\s*\)\s*\{', hook, mc, count=1)
           with open(mc_path, "w", encoding="utf-8") as f:
               f.write(mc)
           EOF
