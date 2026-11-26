@@ -23,16 +23,54 @@ jobs:
         with:
           cache-read-only: false
 
-      - name: Decode Keystore
+      - name: Decode or Generate Valid Keystore
         env:
           KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          KS_STORE_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KS_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KS_KEY_PASS: ${{ secrets.KEY_PASSWORD }}
         run: |
+          mkdir -p TMessagesProj
+          KS_PATH="$(pwd)/TMessagesProj/my_telegram.jks"
+          STORE_PASS="${KS_STORE_PASS:-android123}"
+          KEY_ALIAS="${KS_KEY_ALIAS:-telegram}"
+          KEY_PASS="${KS_KEY_PASS:-$STORE_PASS}"
+
+          VALID_KS=0
           if [ -n "$KEYSTORE_B64" ]; then
-            echo "$KEYSTORE_B64" | tr -d '[:space:]' | base64 -d > TMessagesProj/my_telegram.jks
-            ls -lh TMessagesProj/my_telegram.jks
-          else
-            echo "Warning: KEYSTORE_BASE64 secret is empty"
+            echo "$KEYSTORE_B64" | tr -d '[:space:]' | base64 -d > "$KS_PATH" || true
+            if keytool -list -keystore "$KS_PATH" -storepass "$STORE_PASS" -alias "$KEY_ALIAS" >/dev/null 2>&1; then
+              echo "Decoded keystore verified successfully for alias '$KEY_ALIAS'."
+              VALID_KS=1
+            else
+              echo "Warning: Provided keystore or alias '$KEY_ALIAS' failed verification."
+              DETECTED_ALIAS=$(keytool -list -keystore "$KS_PATH" -storepass "$STORE_PASS" 2>/dev/null | grep -E "PrivateKeyEntry|keyEntry" | head -n 1 | cut -d',' -f1 | tr -d '[:space:]')
+              if [ -n "$DETECTED_ALIAS" ]; then
+                echo "Auto-detected alias inside keystore: $DETECTED_ALIAS"
+                KEY_ALIAS="$DETECTED_ALIAS"
+                VALID_KS=1
+              fi
+            fi
           fi
+
+          if [ "$VALID_KS" -eq 0 ]; then
+            echo "Generating fresh fallback release keystore..."
+            rm -f "$KS_PATH"
+            STORE_PASS="android123"
+            KEY_ALIAS="telegram"
+            KEY_PASS="android123"
+            keytool -genkeypair -v \
+              -keystore "$KS_PATH" \
+              -storepass "$STORE_PASS" \
+              -alias "$KEY_ALIAS" \
+              -keypass "$KEY_PASS" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Notes, OU=Dev, O=Custom, L=City, S=State, C=US"
+          fi
+
+          echo "EFFECTIVE_STORE_PASS=$STORE_PASS" >> "$GITHUB_ENV"
+          echo "EFFECTIVE_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "EFFECTIVE_KEY_PASS=$KEY_PASS" >> "$GITHUB_ENV"
 
       - name: Apply Stealth, Standalone Package, Signing & Maven Mirror Patches
         env:
@@ -40,9 +78,6 @@ jobs:
           RAW_API_HASH: ${{ secrets.TG_API_HASH }}
           NEW_PKG: "com.alexey.notesclient"
           NEW_NAME: "Notes"
-          KS_STORE_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
-          KS_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KS_KEY_PASS: ${{ secrets.KEY_PASSWORD }}
         run: |
           python3 - << 'EOF'
           import os, re, glob, json, copy
@@ -107,41 +142,34 @@ jobs:
                   with open(gf_path, "w", encoding="utf-8") as f:
                       f.write(gf_new)
 
-          # 3. Configure Release Signing cleanly via env vars if available
-          ks_exists = os.path.exists("TMessagesProj/my_telegram.jks") and os.path.getsize("TMessagesProj/my_telegram.jks") > 0
-          store_pass = os.environ.get("KS_STORE_PASS", "").strip()
-          key_alias = os.environ.get("KS_KEY_ALIAS", "").strip()
-          key_pass = os.environ.get("KS_KEY_PASS", "").strip()
-
-          if ks_exists and store_pass and key_alias and key_pass:
-              signing_patch = f"""
-              gradle.afterProject {{ project ->
-                  if (project.android != null) {{
-                      try {{
-                          def cfg = project.android.signingConfigs.maybeCreate("customRelease")
-                          cfg.storeFile = project.rootProject.file("TMessagesProj/my_telegram.jks")
-                          cfg.storePassword = System.getenv("KS_STORE_PASS")
-                          cfg.keyAlias = System.getenv("KS_KEY_ALIAS")
-                          cfg.keyPassword = System.getenv("KS_KEY_PASS")
-                          project.android.buildTypes.all {{ bt ->
-                              if (bt.name == "release") {{
-                                  bt.signingConfig = cfg
-                              }}
-                          }}
-                      }} catch (Exception ignored) {{}}
-                  }}
-              }}
-              """
-              for root_g in ["build.gradle", "TMessagesProj_App/build.gradle"]:
-                  if os.path.exists(root_g):
-                      with open(root_g, "r", encoding="utf-8") as f:
-                          rg = f.read()
-                      if "customRelease" not in rg:
-                          with open(root_g, "w", encoding="utf-8") as f:
-                              f.write(rg + "\n" + signing_patch)
-                          print(f"Configured customRelease signing in {root_g}")
-          else:
-              print("Keystore or signing secrets incomplete; skipping customRelease signing override.")
+          # 3. Configure Release Signing ONLY on Android app/library modules (never root project)
+          signing_patch = """
+          if (project.hasProperty("android")) {
+              project.android {
+                  signingConfigs {
+                      customRelease {
+                          storeFile project.rootProject.file("TMessagesProj/my_telegram.jks")
+                          storePassword System.getenv("EFFECTIVE_STORE_PASS")
+                          keyAlias System.getenv("EFFECTIVE_KEY_ALIAS")
+                          keyPassword System.getenv("EFFECTIVE_KEY_PASS")
+                      }
+                  }
+                  buildTypes {
+                      release {
+                          signingConfig signingConfigs.customRelease
+                      }
+                  }
+              }
+          }
+          """
+          for mod_g in ["TMessagesProj_App/build.gradle", "TMessagesProj/build.gradle"]:
+              if os.path.exists(mod_g):
+                  with open(mod_g, "r", encoding="utf-8") as f:
+                      mg = f.read()
+                  if "customRelease" not in mg:
+                      with open(mod_g, "w", encoding="utf-8") as f:
+                          f.write(mg + "\n" + signing_patch)
+                      print(f"Configured customRelease signing safely in {mod_g}")
 
           # 4. google-services.json
           for gs_path in glob.glob("**/google-services.json", recursive=True):
@@ -262,10 +290,6 @@ jobs:
           EOF
 
       - name: Build arm64 Release APK
-        env:
-          KS_STORE_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
-          KS_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KS_KEY_PASS: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x gradlew
           ./gradlew :TMessagesProj_App:assembleAfatRelease --max-workers=2
