@@ -25,91 +25,126 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
             TMessagesProj/.cxx
-          key: ${{ runner.os }}-gradle-stealth-v9-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/CMakeLists.txt') }}
+            TMessagesProj_App/.cxx
+          key: ${{ runner.os }}-gradle-stealth-v11-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-gradle-stealth-v9-
+            ${{ runner.os }}-gradle-stealth-v11-
 
       - name: Clone whisper.cpp
         run: |
+          rm -rf TMessagesProj/jni/whisper
           git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git TMessagesProj/jni/whisper
 
       - name: Decode Keystore
-        run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > TMessagesProj/my_telegram.jks
-
-      - name: Apply Stealth and Feature Patches
         env:
-          API_ID: ${{ secrets.TG_API_ID || '2040' }}
-          API_HASH: ${{ secrets.TG_API_HASH || 'b18441a1ff607e10a989891a5462e627' }}
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > TMessagesProj/my_telegram.jks
+          else
+            echo "Warning: KEYSTORE_BASE64 secret is empty"
+          fi
+
+      - name: Apply Stealth and Feature Patches (Standalone Package)
+        env:
+          RAW_API_ID: ${{ secrets.TG_API_ID }}
+          RAW_API_HASH: ${{ secrets.TG_API_HASH }}
           NEW_PKG: "com.alexey.notesclient"
           NEW_NAME: "Notes"
         run: |
           python3 - << 'EOF'
           import os, re, glob, json, copy
 
-          api_id = os.environ["API_ID"]
-          api_hash = os.environ["API_HASH"]
+          api_id = os.environ.get("RAW_API_ID", "").strip() or "2040"
+          api_hash = os.environ.get("RAW_API_HASH", "").strip() or "b18441a1ff607e10a989891a5462e627"
           new_pkg = os.environ["NEW_PKG"]
           new_name = os.environ["NEW_NAME"]
 
           # 1. API Keys
           bv_path = "TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java"
-          with open(bv_path, "r", encoding="utf-8") as f:
-              bv = f.read()
-          bv = re.sub(r'public static int APP_ID = .*?;', f'public static int APP_ID = {api_id};', bv)
-          bv = re.sub(r'public static String APP_HASH = .*?;', f'public static String APP_HASH = "{api_hash}";', bv)
-          with open(bv_path, "w", encoding="utf-8") as f:
-              f.write(bv)
+          if os.path.exists(bv_path):
+              with open(bv_path, "r", encoding="utf-8") as f:
+                  bv = f.read()
+              bv = re.sub(r'(public\s+static\s+int\s+APP_ID\s*=\s*)[^;]+;', rf'\g<1>{api_id};', bv)
+              bv = re.sub(r'(public\s+static\s+String\s+APP_HASH\s*=\s*)[^;]+;', rf'\g<1>"{api_hash}";', bv)
+              with open(bv_path, "w", encoding="utf-8") as f:
+                  f.write(bv)
 
-          # 2. Complete Package ID & Authorities Replacement (Install alongside official Telegram)
+          # 2. Package ID & Authorities in build.gradle files
           for gf_path in glob.glob("**/build.gradle", recursive=True):
+              if "/build/" in gf_path or "\\build\\" in gf_path:
+                  continue
               with open(gf_path, "r", encoding="utf-8") as f:
                   gf = f.read()
-              gf = re.sub(r'applicationId\s*=?\s*["\']org\.telegram\.messenger[^"\']*["\']', f'applicationId "{new_pkg}"', gf)
-              gf = re.sub(r'applicationIdSuffix\s*=?\s*["\'][^"\']*["\']', '', gf)
-              with open(gf_path, "w", encoding="utf-8") as f:
-                  f.write(gf)
+              gf_new = re.sub(
+                  r'applicationId\s*=?\s*["\']org\.telegram\.messenger[^"\']*["\']',
+                  f'applicationId "{new_pkg}"',
+                  gf
+              )
+              gf_new = re.sub(
+                  r'applicationIdSuffix\s*=?\s*["\'][^"\']*["\']',
+                  '',
+                  gf_new
+              )
+              gf_new = gf_new.replace("org.telegram.messenger.provider", f"{new_pkg}.provider")
+              gf_new = gf_new.replace("org.telegram.messenger.call_provider", f"{new_pkg}.call_provider")
+              gf_new = gf_new.replace("org.telegram.messenger.notification_image_provider", f"{new_pkg}.notification_image_provider")
+              gf_new = gf_new.replace("org.telegram.messenger.permission.", f"{new_pkg}.permission.")
+              if gf_new != gf:
+                  with open(gf_path, "w", encoding="utf-8") as f:
+                      f.write(gf_new)
 
-          app_gradle = "TMessagesProj_App/build.gradle"
-          if os.path.exists(app_gradle):
-              with open(app_gradle, "r", encoding="utf-8") as f:
-                  ag = f.read()
-              ag += f'\nandroid {{ defaultConfig {{ applicationId "{new_pkg}" }} }}\n'
-              with open(app_gradle, "w", encoding="utf-8") as f:
-                  f.write(ag)
-
+          # 3. google-services.json
           for gs_path in glob.glob("**/google-services.json", recursive=True):
+              if "/build/" in gs_path or "\\build\\" in gs_path:
+                  continue
               with open(gs_path, "r", encoding="utf-8") as f:
                   gs = json.load(f)
-              if "client" in gs and isinstance(gs["client"], list):
-                  new_clients = []
-                  existing_pkgs = set()
-                  for c in gs["client"]:
-                      pkg = c.get("client_info", {}).get("android_client_info", {}).get("package_name", "")
-                      if pkg:
-                          existing_pkgs.add(pkg)
-                      new_clients.append(c)
-                  for c in list(gs["client"]):
-                      pkg = c.get("client_info", {}).get("android_client_info", {}).get("package_name", "")
-                      if pkg == "org.telegram.messenger" and new_pkg not in existing_pkgs:
-                          cloned = copy.deepcopy(c)
-                          cloned["client_info"]["android_client_info"]["package_name"] = new_pkg
-                          new_clients.append(cloned)
-                          existing_pkgs.add(new_pkg)
-                  gs["client"] = new_clients
+              clients = gs.get("client")
+              if isinstance(clients, list):
+                  existing_pkgs = {
+                      c.get("client_info", {}).get("android_client_info", {}).get("package_name", "")
+                      for c in clients
+                  }
+                  if new_pkg not in existing_pkgs:
+                      for c in list(clients):
+                          pkg = c.get("client_info", {}).get("android_client_info", {}).get("package_name", "")
+                          if pkg == "org.telegram.messenger":
+                              cloned = copy.deepcopy(c)
+                              cloned["client_info"]["android_client_info"]["package_name"] = new_pkg
+                              clients.append(cloned)
+                              break
               with open(gs_path, "w", encoding="utf-8") as f:
                   json.dump(gs, f, indent=2)
 
+          # 4. AndroidManifest & XML authorities/permissions/providers
           for mf_path in glob.glob("**/AndroidManifest.xml", recursive=True):
+              if "/build/" in mf_path or "\\build\\" in mf_path:
+                  continue
               with open(mf_path, "r", encoding="utf-8") as f:
                   mf = f.read()
-              mf = re.sub(r'package\s*=\s*["\']org\.telegram\.messenger[^"\']*["\']', f'package="{new_pkg}"', mf)
-              for suff in ["provider", "call_provider", "notification_image_provider", "permission.MAPS_RECEIVE", "permission.C2D_MESSAGE", "DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"]:
+              for suff in [
+                  "provider",
+                  "call_provider",
+                  "notification_image_provider",
+                  "beta_provider",
+                  "permission.MAPS_RECEIVE",
+                  "permission.C2D_MESSAGE",
+                  "DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+              ]:
                   mf = mf.replace(f"org.telegram.messenger.{suff}", f"{new_pkg}.{suff}")
+              # Уникализируем кастомные authorities, если они начинаются с org.telegram.messenger
+              mf = re.sub(
+                  r'(android:authorities=["\'])org\.telegram\.messenger\.([^"\']+)(["\'])',
+                  rf'\g<1>{new_pkg}.\g<2>\g<3>',
+                  mf
+              )
               with open(mf_path, "w", encoding="utf-8") as f:
                   f.write(mf)
 
           for rx_path in glob.glob("**/res/xml/*.xml", recursive=True):
+              if "/build/" in rx_path or "\\build\\" in rx_path:
+                  continue
               with open(rx_path, "r", encoding="utf-8") as f:
                   rx = f.read()
               if "org.telegram.messenger" in rx:
@@ -117,6 +152,7 @@ jobs:
                   with open(rx_path, "w", encoding="utf-8") as f:
                       f.write(rx)
 
+          # 5. AppName
           for xml_path in glob.glob("TMessagesProj/src/main/res/values*/strings.xml"):
               with open(xml_path, "r", encoding="utf-8") as f:
                   xml = f.read()
@@ -124,7 +160,7 @@ jobs:
               with open(xml_path, "w", encoding="utf-8") as f:
                   f.write(xml)
 
-          # 3. CustomConfig Helper (Per-chat Stock Mode, Deleted Messages Tracker, 120Hz)
+          # 6. CustomConfig
           h_dir = "TMessagesProj/src/main/java/org/telegram/messenger"
           custom_cfg_code = """package org.telegram.messenger;
 
@@ -140,18 +176,23 @@ jobs:
               private static SharedPreferences getPrefs() {
                   return ApplicationLoader.applicationContext.getSharedPreferences("my_custom_prefs", Context.MODE_PRIVATE);
               }
+
               public static boolean isStockMode(long dialogId) {
                   return getPrefs().getBoolean("stock_" + dialogId, false);
               }
+
               public static void toggleStockMode(long dialogId) {
                   getPrefs().edit().putBoolean("stock_" + dialogId, !isStockMode(dialogId)).apply();
               }
+
               public static boolean isForce120Hz() {
                   return getPrefs().getBoolean("force_120hz", true);
               }
+
               public static void markDeletedLocally(long dialogId, int msgId) {
                   deletedIds.add(dialogId + "_" + msgId);
               }
+
               public static boolean isDeletedLocally(long dialogId, int msgId) {
                   return deletedIds.contains(dialogId + "_" + msgId);
               }
@@ -160,307 +201,285 @@ jobs:
           with open(f"{h_dir}/CustomConfig.java", "w", encoding="utf-8") as f:
               f.write(custom_cfg_code)
 
-          # 4. Anti-Delete in MessagesStorage (Parse exact parameter names & return type)
-          ms_path = f"{h_dir}/MessagesStorage.java"
-          with open(ms_path, "r", encoding="utf-8") as f:
-              ms = f.read()
+          # 7. Hook Whisper transcription methods
+          whisper_hook_snippet = """
+                  if (msgObject != null) {
+                      final MessageObject targetMsg = msgObject;
+                      final int accId = UserConfig.selectedAccount;
+                      Utilities.globalQueue.postRunnable(() -> {
+                          java.io.File file = FileLoader.getInstance(accId).getPathToMessage(targetMsg.messageOwner);
+                          if (file == null || !file.exists()) {
+                              AndroidUtilities.runOnUIThread(() -> {
+                                  targetMsg.messageOwner.voiceTranscription = "Сначала скачай голосовое...";
+                                  targetMsg.messageOwner.voiceTranscriptionOpen = true;
+                                  NotificationCenter.getInstance(accId).postNotificationName(NotificationCenter.voiceTranscriptionUpdate, targetMsg, null, targetMsg.messageOwner.voiceTranscription, true, true);
+                              });
+                              return;
+                          }
+                          AndroidUtilities.runOnUIThread(() -> {
+                              targetMsg.messageOwner.voiceTranscription = "Whisper расшифровывает...";
+                              targetMsg.messageOwner.voiceTranscriptionOpen = true;
+                              NotificationCenter.getInstance(accId).postNotificationName(NotificationCenter.voiceTranscriptionUpdate, targetMsg, null, targetMsg.messageOwner.voiceTranscription, true, false);
+                          });
+                          String text = org.telegram.messenger.WhisperHelper.transcribeFile(file);
+                          AndroidUtilities.runOnUIThread(() -> {
+                              targetMsg.messageOwner.voiceTranscription = text;
+                              targetMsg.messageOwner.voiceTranscriptionOpen = true;
+                              NotificationCenter.getInstance(accId).postNotificationName(NotificationCenter.voiceTranscriptionUpdate, targetMsg, null, text, true, true);
+                          });
+                      });
+                      return;
+                  }"""
 
-          def patch_mark_deleted(match):
-              header = match.group(0)
-              ret_type = match.group(1).strip()
-              params_str = match.group(2)
-              params = [p.strip().split() for p in params_str.split(",") if p.strip()]
-              long_var = None
-              list_var = None
-              int_var = None
-              for tokens in params:
-                  name = tokens[-1]
-                  ptype = " ".join(tokens[:-1])
-                  if "long" in ptype and long_var is None:
-                      long_var = name
-                  elif ("ArrayList" in ptype or "List" in ptype) and list_var is None:
-                      list_var = name
-                  elif ptype in ("int", "final int") and int_var is None:
-                      int_var = name
-              ret_stmt = "return;" if ret_type == "void" else ("return false;" if ret_type == "boolean" else ("return 0;" if ret_type in ("int", "long") else "return null;"))
-              if long_var and list_var:
-                  guard = f"\n        if (!CustomConfig.isStockMode({long_var})) {{ if ({list_var} != null) for (Integer mid : {list_var}) {{ if (mid != null) CustomConfig.markDeletedLocally({long_var}, mid); }} {ret_stmt} }}"
-                  return header + guard
-              elif long_var and int_var:
-                  guard = f"\n        if (!CustomConfig.isStockMode({long_var})) {{ CustomConfig.markDeletedLocally({long_var}, {int_var}); {ret_stmt} }}"
-                  return header + guard
-              elif list_var:
-                  guard = f"\n        if (!CustomConfig.isStockMode(0L)) {{ if ({list_var} != null) for (Integer mid : {list_var}) {{ if (mid != null) CustomConfig.markDeletedLocally(0L, mid); }} {ret_stmt} }}"
-                  return header + guard
-              return header
-
-          ms_new, ms_count = re.subn(
-              r'public\s+([a-zA-Z0-9_<>\[\]]+)\s+markMessagesAsDeleted\s*\(([^)]*)\)\s*\{',
-              patch_mark_deleted,
-              ms
-          )
-          print(f"MessagesStorage markMessagesAsDeleted hooks applied: {ms_count}")
-          assert ms_count > 0, "Failed to hook markMessagesAsDeleted in MessagesStorage"
-          with open(ms_path, "w", encoding="utf-8") as f:
-              f.write(ms_new)
-
-          # 5. Anti-Delete in MessagesController (Prevent UI & memory removal)
           mc_path = f"{h_dir}/MessagesController.java"
           with open(mc_path, "r", encoding="utf-8") as f:
               mc = f.read()
 
-          def patch_mc_delete(match):
-              header = match.group(0)
-              params_str = match.group(1)
-              params = [p.strip().split() for p in params_str.split(",") if p.strip()]
-              long_var = None
-              list_var = None
-              for tokens in params:
-                  name = tokens[-1]
-                  ptype = " ".join(tokens[:-1])
-                  if "long" in ptype and long_var is None:
-                      long_var = name
-                  elif ("ArrayList" in ptype or "List" in ptype) and list_var is None:
-                      list_var = name
-              if long_var and list_var:
-                  guard = f"\n        if (!CustomConfig.isStockMode({long_var})) {{ if ({list_var} != null) for (Integer mid : {list_var}) {{ if (mid != null) CustomConfig.markDeletedLocally({long_var}, mid); }} return; }}"
-                  return header + guard
-              return header
-
-          mc_new, del_count = re.subn(
-              r'public\s+void\s+deleteMessages\s*\(([^)]*)\)\s*\{',
-              patch_mc_delete,
-              mc
-          )
-          print(f"MessagesController deleteMessages hooks applied: {del_count}")
-          mc = mc_new
-
-          # 6. Unlock Transcribe Button (->A) without Premium & Hook Whisper (Works in Stock Mode too)
           mc, ctv_count = re.subn(
               r'(public\s+boolean\s+canTranscribeVoice\s*\([^)]*\)\s*\{)',
               r'\1\n        return true;',
               mc
           )
           print(f"canTranscribeVoice hooks applied: {ctv_count}")
+          with open(mc_path, "w", encoding="utf-8") as f:
+              f.write(mc)
 
-          # Hook pressTranscribeButton(MessageObject) or transcribeAudio/Voice across all Java files
-          whisper_injected_files = 0
+          whisper_hooks = 0
           for j_path in glob.glob("TMessagesProj/src/main/java/org/telegram/**/*.java", recursive=True):
               with open(j_path, "r", encoding="utf-8") as f:
                   j_code = f.read()
 
-              def inject_whisper_hook(m):
+              def repl_transcribe(m):
                   hdr = m.group(0)
                   params_str = m.group(1)
-                  msg_var = None
                   for p in params_str.split(","):
                       tokens = p.strip().split()
                       if len(tokens) >= 2 and "MessageObject" in tokens[-2]:
-                          msg_var = tokens[-1]
-                          break
-                  if not msg_var:
-                      return hdr
-                  acc_expr = "currentAccount" if "currentAccount" in j_code else "UserConfig.selectedAccount"
-                  hook_body = f"""
-                  if ({msg_var} != null) {{
-                      final MessageObject targetMsg = {msg_var};
-                      final int accId = {acc_expr};
-                      Utilities.globalQueue.postRunnable(() -> {{
-                          java.io.File file = FileLoader.getInstance(accId).getPathToMessage(targetMsg.messageOwner);
-                          if (file == null || !file.exists()) {{
-                              AndroidUtilities.runOnUIThread(() -> {{
-                                  targetMsg.messageOwner.voiceTranscription = "Сначала скачай голосовое...";
-                                  targetMsg.messageOwner.voiceTranscriptionOpen = true;
-                                  NotificationCenter.getInstance(accId).postNotificationName(NotificationCenter.voiceTranscriptionUpdate, targetMsg, null, targetMsg.messageOwner.voiceTranscription, true, true);
-                              }});
-                              return;
-                          }}
-                          AndroidUtilities.runOnUIThread(() -> {{
-                              targetMsg.messageOwner.voiceTranscription = "Whisper (small) расшифровывает...";
-                              targetMsg.messageOwner.voiceTranscriptionOpen = true;
-                              NotificationCenter.getInstance(accId).postNotificationName(NotificationCenter.voiceTranscriptionUpdate, targetMsg, null, targetMsg.messageOwner.voiceTranscription, true, false);
-                          }});
-                          String text = org.telegram.messenger.WhisperHelper.transcribeFile(file);
-                          AndroidUtilities.runOnUIThread(() -> {{
-                              targetMsg.messageOwner.voiceTranscription = text;
-                              targetMsg.messageOwner.voiceTranscriptionOpen = true;
-                              NotificationCenter.getInstance(accId).postNotificationName(NotificationCenter.voiceTranscriptionUpdate, targetMsg, null, text, true, true);
-                          }});
-                      }});
-                      return;
-                  }}"""
-                  return hdr + hook_body
+                          var_name = tokens[-1]
+                          return hdr + whisper_hook_snippet.replace("msgObject", var_name)
+                  return hdr
 
-              j_new, w_cnt = re.subn(
-                  r'public\s+void\s+(?:pressTranscribeButton|transcribeAudio|transcribeVoice|transcribeMessage)\s*\(([^)]*MessageObject[^)]*)\)\s*\{',
-                  inject_whisper_hook,
+              j_new, cnt = re.subn(
+                  r'public\s+void\s+(?:pressTranscribeButton|transcribeAudio|transcribeVoice)\s*\(([^)]*MessageObject[^)]*)\)\s*\{',
+                  repl_transcribe,
                   j_code
               )
-              if w_cnt > 0:
+              if cnt > 0:
                   with open(j_path, "w", encoding="utf-8") as f:
                       f.write(j_new)
-                  whisper_injected_files += w_cnt
-                  print(f"Whisper hook injected into {j_path} ({w_cnt} methods)")
+                  whisper_hooks += cnt
+                  print(f"Whisper hook added in {j_path}: {cnt}")
 
-          # Also hook parameterless pressTranscribeButton() in MessagesController if present
-          if "public void pressTranscribeButton() {" in mc:
-              mc = mc.replace(
-                  "public void pressTranscribeButton() {",
-                  "public void pressTranscribeButton() { if (true) return;",
-                  1
-              )
+          assert whisper_hooks > 0, "No transcribe method with MessageObject found!"
 
-          with open(mc_path, "w", encoding="utf-8") as f:
-              f.write(mc)
-
-          assert whisper_injected_files > 0, "Failed to inject Whisper hook into any transcribe method!"
-
-          # Force show (->A) button in ChatMessageCell
-          cmc_path = "TMessagesProj/src/main/java/org/telegram/ui/Cells/ChatMessageCell.java"
-          if os.path.exists(cmc_path):
-              with open(cmc_path, "r", encoding="utf-8") as f:
-                  cmc = f.read()
-              cmc = re.sub(
-                  r'(private\s+boolean\s+hasTranscribeButton\s*\([^)]*\)\s*\{)',
-                  r'\1\n        if (currentMessageObject != null && (currentMessageObject.isVoice() || currentMessageObject.isRoundVideo())) return true;',
-                  cmc
-              )
-              cmc = cmc.replace("hasTranscribeButton = false;", "hasTranscribeButton = (currentMessageObject != null && (currentMessageObject.isVoice() || currentMessageObject.isRoundVideo()));")
-              with open(cmc_path, "w", encoding="utf-8") as f:
-                  f.write(cmc)
-              print("ChatMessageCell transcribe button unlocked!")
-
-          # 7. Visible "Stock Mode" Toggle in ChatActivity Menu (Right next to ClearHistory)
-          ca_path = "TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java"
-          with open(ca_path, "r", encoding="utf-8") as f:
-              ca = f.read()
-
-          ca, ca_menu_count = re.subn(
-              r'([a-zA-Z0-9_]+\.addSubItem\([^;]*R\.string\.ClearHistory[^;]*\);)',
-              r'\1\n        headerItem.addSubItem(9991, org.telegram.messenger.R.drawable.msg_settings, "Сток-режим (вкл/выкл)");',
-              ca,
-              count=1
-          )
-          if ca_menu_count == 0:
-              ca, ca_menu_count = re.subn(
-                  r'(headerItem\.addSubItem\([^;]+\);)',
-                  r'\1\n        headerItem.addSubItem(9991, org.telegram.messenger.R.drawable.msg_settings, "Сток-режим (вкл/выкл)");',
-                  ca,
-                  count=1
-              )
-          print(f"ChatActivity stock menu added: {ca_menu_count}")
-          assert ca_menu_count > 0, "Failed to add Stock Mode menu item in ChatActivity"
-
-          ca, ca_click_count = re.subn(
-              r'(public\s+void\s+onItemClick\s*\(\s*(?:final\s+)?int\s+id\s*\)\s*\{)',
-              r'\1\n                if (id == 9991) { org.telegram.messenger.CustomConfig.toggleStockMode(dialog_id); org.telegram.ui.Components.BulletinFactory.of(ChatActivity.this).createSimpleBulletin(org.telegram.messenger.R.raw.ic_ban, org.telegram.messenger.CustomConfig.isStockMode(dialog_id) ? "Сток-режим ВКЛ" : "Сток-режим ВЫКЛ").show(); return; }',
-              ca,
-              count=1
-          )
-          print(f"ChatActivity onItemClick hooked: {ca_click_count}")
-          assert ca_click_count > 0, "Failed to hook onItemClick in ChatActivity"
-
-          with open(ca_path, "w", encoding="utf-8") as f:
-              f.write(ca)
-
-          # 8. Save Disposable Media / TTL in SecretMediaViewer (Disabled in Stock Mode)
-          smv_path = "TMessagesProj/src/main/java/org/telegram/ui/SecretMediaViewer.java"
-          with open(smv_path, "r", encoding="utf-8") as f:
-              smv = f.read()
-          smv = smv.replace(
-              "currentMessageObject.isSecretMedia()",
-              "(currentMessageObject != null && org.telegram.messenger.CustomConfig.isStockMode(currentMessageObject.getDialogId()) && currentMessageObject.isSecretMedia())"
-          )
-          smv = re.sub(r'(closeAfter\s*=\s*)([^;]+);', r'\1(currentMessageObject != null && org.telegram.messenger.CustomConfig.isStockMode(currentMessageObject.getDialogId())) ? (\2) : 0;', smv)
-          with open(smv_path, "w", encoding="utf-8") as f:
-              f.write(smv)
-          print("SecretMediaViewer TTL & Save patch applied!")
-
-          # 9. Force 120Hz Graphics
+          # 8. Force 120Hz
           au_path = f"{h_dir}/AndroidUtilities.java"
-          with open(au_path, "r", encoding="utf-8") as f:
-              au = f.read()
-          au = au.replace("screenRefreshRate = 60;", "screenRefreshRate = CustomConfig.isForce120Hz() ? 120 : 60;")
-          with open(au_path, "w", encoding="utf-8") as f:
-              f.write(au)
-          print("120Hz graphics patch applied!")
+          if os.path.exists(au_path):
+              with open(au_path, "r", encoding="utf-8") as f:
+                  au = f.read()
+              au = au.replace("screenRefreshRate = 60;", "screenRefreshRate = CustomConfig.isForce120Hz() ? 120 : 60;")
+              with open(au_path, "w", encoding="utf-8") as f:
+                  f.write(au)
           EOF
 
-      - name: Integrate Static Native Whisper.cpp (small-q5_1)
+      - name: Integrate Native Whisper.cpp (Android NDK MediaCodec PCM)
         run: |
           cat << 'EOF' > TMessagesProj/jni/whisper_jni.cpp
           #include <jni.h>
           #include <string>
           #include <vector>
+          #include <mutex>
+          #include <cstdio>
+          #include <cstring>
+          #include <media/NdkMediaExtractor.h>
+          #include <media/NdkMediaCodec.h>
           #include "whisper/include/whisper.h"
 
-          extern "C" {
-          #include <libavformat/avformat.h>
-          #include <libavcodec/avcodec.h>
-          #include <libswresample/swresample.h>
-          #include <libavutil/opt.h>
-          #include <libavutil/channel_layout.h>
-          }
-
+          static std::mutex g_mtx;
           static struct whisper_context *g_ctx = nullptr;
+          static std::string g_loaded_model;
 
-          static bool decode_audio_to_pcm16(const char* path, std::vector<float>& pcmf32) {
-              AVFormatContext* fmt_ctx = nullptr;
-              if (avformat_open_input(&fmt_ctx, path, nullptr, nullptr) < 0) return false;
-              if (avformat_find_stream_info(fmt_ctx, nullptr) < 0) { avformat_close_input(&fmt_ctx); return false; }
-              int stream_idx = av_find_best_stream(fmt_ctx, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
-              if (stream_idx < 0) { avformat_close_input(&fmt_ctx); return false; }
-              AVStream* stream = fmt_ctx->streams[stream_idx];
-              const AVCodec* dec = avcodec_find_decoder(stream->codecpar->codec_id);
-              AVCodecContext* dec_ctx = avcodec_alloc_context3(dec);
-              avcodec_parameters_to_context(dec_ctx, stream->codecpar);
-              if (avcodec_open2(dec_ctx, dec, nullptr) < 0) { avcodec_free_context(&dec_ctx); avformat_close_input(&fmt_ctx); return false; }
+          static bool decode_audio_to_pcm16k_mono(const char* path, std::vector<float>& out_pcm) {
+              FILE* fp = fopen(path, "rb");
+              if (!fp) return false;
+              fseek(fp, 0, SEEK_END);
+              long size = ftell(fp);
+              fseek(fp, 0, SEEK_SET);
+              if (size <= 0) {
+                  fclose(fp);
+                  return false;
+              }
 
-              SwrContext* swr = nullptr;
-              AVChannelLayout out_ch_layout = AV_CHANNEL_LAYOUT_MONO;
-              swr_alloc_set_opts2(&swr, &out_ch_layout, AV_SAMPLE_FMT_FLT, 16000, &dec_ctx->ch_layout, dec_ctx->sample_fmt, dec_ctx->sample_rate, 0, nullptr);
-              if (!swr || swr_init(swr) < 0) { if (swr) swr_free(&swr); avcodec_free_context(&dec_ctx); avformat_close_input(&fmt_ctx); return false; }
+              AMediaExtractor* extractor = AMediaExtractor_new();
+              media_status_t err = AMediaExtractor_setDataSourceFd(extractor, fileno(fp), 0, size);
+              if (err != AMEDIA_OK) {
+                  AMediaExtractor_delete(extractor);
+                  fclose(fp);
+                  return false;
+              }
 
-              AVPacket* pkt = av_packet_alloc();
-              AVFrame* frame = av_frame_alloc();
-              while (av_read_frame(fmt_ctx, pkt) >= 0) {
-                  if (pkt->stream_index == stream_idx && avcodec_send_packet(dec_ctx, pkt) == 0) {
-                      while (avcodec_receive_frame(dec_ctx, frame) == 0) {
-                          int out_samples = av_rescale_rnd(swr_get_delay(swr, dec_ctx->sample_rate) + frame->nb_samples, 16000, dec_ctx->sample_rate, AV_ROUND_UP);
-                          std::vector<float> buf(out_samples);
-                          uint8_t* out_ptr = reinterpret_cast<uint8_t*>(buf.data());
-                          int converted = swr_convert(swr, &out_ptr, out_samples, (const uint8_t**)frame->data, frame->nb_samples);
-                          if (converted > 0) pcmf32.insert(pcmf32.end(), buf.begin(), buf.begin() + converted);
+              size_t num_tracks = AMediaExtractor_getTrackCount(extractor);
+              int audio_track = -1;
+              AMediaFormat* format = nullptr;
+              for (size_t i = 0; i < num_tracks; ++i) {
+                  AMediaFormat* fmt = AMediaExtractor_getTrackFormat(extractor, i);
+                  const char* mime = nullptr;
+                  if (AMediaFormat_getString(fmt, AMEDIA_FORMAT_KEY_MIME, &mime) && mime && strncmp(mime, "audio/", 6) == 0) {
+                      audio_track = static_cast<int>(i);
+                      format = fmt;
+                      break;
+                  }
+                  AMediaFormat_delete(fmt);
+              }
+
+              if (audio_track < 0 || !format) {
+                  AMediaExtractor_delete(extractor);
+                  fclose(fp);
+                  return false;
+              }
+
+              AMediaExtractor_selectTrack(extractor, audio_track);
+              const char* mime = nullptr;
+              AMediaFormat_getString(format, AMEDIA_FORMAT_KEY_MIME, &mime);
+              int32_t sample_rate = 16000;
+              int32_t channel_count = 1;
+              AMediaFormat_getInt32(format, AMEDIA_FORMAT_KEY_SAMPLE_RATE, &sample_rate);
+              AMediaFormat_getInt32(format, AMEDIA_FORMAT_KEY_CHANNEL_COUNT, &channel_count);
+
+              AMediaCodec* codec = AMediaCodec_createDecoderByType(mime);
+              if (!codec || AMediaCodec_configure(codec, format, nullptr, nullptr, 0) != AMEDIA_OK || AMediaCodec_start(codec) != AMEDIA_OK) {
+                  if (codec) AMediaCodec_delete(codec);
+                  AMediaFormat_delete(format);
+                  AMediaExtractor_delete(extractor);
+                  fclose(fp);
+                  return false;
+              }
+
+              std::vector<float> raw_mono;
+              bool saw_input_eos = false;
+              bool saw_output_eos = false;
+
+              while (!saw_output_eos) {
+                  if (!saw_input_eos) {
+                      ssize_t in_idx = AMediaCodec_dequeueInputBuffer(codec, 10000);
+                      if (in_idx >= 0) {
+                          size_t buf_size = 0;
+                          uint8_t* buf = AMediaCodec_getInputBuffer(codec, in_idx, &buf_size);
+                          ssize_t sample_size = AMediaExtractor_readSampleData(extractor, buf, buf_size);
+                          if (sample_size < 0) {
+                              AMediaCodec_queueInputBuffer(codec, in_idx, 0, 0, 0, AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM);
+                              saw_input_eos = true;
+                          } else {
+                              int64_t pts = AMediaExtractor_getSampleTime(extractor);
+                              AMediaCodec_queueInputBuffer(codec, in_idx, 0, sample_size, pts, 0);
+                              AMediaExtractor_advance(extractor);
+                          }
                       }
                   }
-                  av_packet_unref(pkt);
+
+                  AMediaCodecBufferInfo info;
+                  ssize_t out_idx = AMediaCodec_dequeueOutputBuffer(codec, &info, 10000);
+                  if (out_idx >= 0) {
+                      if (info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM) {
+                          saw_output_eos = true;
+                      }
+                      if (info.size > 0) {
+                          size_t out_size = 0;
+                          uint8_t* out_buf = AMediaCodec_getOutputBuffer(codec, out_idx, &out_size);
+                          const int16_t* samples = reinterpret_cast<const int16_t*>(out_buf + info.offset);
+                          size_t total_samples = info.size / sizeof(int16_t);
+                          size_t frames = total_samples / (channel_count > 0 ? channel_count : 1);
+                          for (size_t f = 0; f < frames; ++f) {
+                              float sum = 0.0f;
+                              for (int c = 0; c < channel_count; ++c) {
+                                  sum += static_cast<float>(samples[f * channel_count + c]) / 32768.0f;
+                              }
+                              raw_mono.push_back(sum / static_cast<float>(channel_count > 0 ? channel_count : 1));
+                          }
+                      }
+                      AMediaCodec_releaseOutputBuffer(codec, out_idx, false);
+                  } else if (out_idx == AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED) {
+                      AMediaFormat* new_fmt = AMediaCodec_getOutputFormat(codec);
+                      if (new_fmt) {
+                          AMediaFormat_getInt32(new_fmt, AMEDIA_FORMAT_KEY_SAMPLE_RATE, &sample_rate);
+                          AMediaFormat_getInt32(new_fmt, AMEDIA_FORMAT_KEY_CHANNEL_COUNT, &channel_count);
+                          AMediaFormat_delete(new_fmt);
+                      }
+                  }
               }
-              av_frame_free(&frame); av_packet_free(&pkt); swr_free(&swr); avcodec_free_context(&dec_ctx); avformat_close_input(&fmt_ctx);
-              return !pcmf32.empty();
+
+              AMediaCodec_stop(codec);
+              AMediaCodec_delete(codec);
+              AMediaFormat_delete(format);
+              AMediaExtractor_delete(extractor);
+              fclose(fp);
+
+              if (raw_mono.empty() || sample_rate <= 0) return false;
+
+              if (sample_rate == 16000) {
+                  out_pcm = std::move(raw_mono);
+              } else {
+                  double ratio = static_cast<double>(sample_rate) / 16000.0;
+                  size_t out_len = static_cast<size_t>(raw_mono.size() / ratio);
+                  out_pcm.resize(out_len);
+                  for (size_t i = 0; i < out_len; ++i) {
+                      size_t src_idx = static_cast<size_t>(i * ratio);
+                      if (src_idx >= raw_mono.size()) src_idx = raw_mono.size() - 1;
+                      out_pcm[i] = raw_mono[src_idx];
+                  }
+              }
+              return !out_pcm.empty();
           }
 
           extern "C" JNIEXPORT jstring JNICALL
           Java_org_telegram_messenger_WhisperHelper_transcribeNative(JNIEnv* env, jclass clazz, jstring modelPath, jstring audioPath) {
+              std::lock_guard<std::mutex> lock(g_mtx);
               const char* m_path = env->GetStringUTFChars(modelPath, nullptr);
               const char* a_path = env->GetStringUTFChars(audioPath, nullptr);
-              if (g_ctx == nullptr) {
+
+              if (g_ctx == nullptr || g_loaded_model != m_path) {
+                  if (g_ctx != nullptr) {
+                      whisper_free(g_ctx);
+                      g_ctx = nullptr;
+                  }
                   struct whisper_context_params cparams = whisper_context_default_params();
                   g_ctx = whisper_init_from_file_with_params(m_path, cparams);
+                  g_loaded_model = (g_ctx != nullptr) ? m_path : "";
               }
-              if (g_ctx == nullptr) { env->ReleaseStringUTFChars(modelPath, m_path); env->ReleaseStringUTFChars(audioPath, a_path); return env->NewStringUTF("Ошибка модели Whisper"); }
+
+              if (g_ctx == nullptr) {
+                  env->ReleaseStringUTFChars(modelPath, m_path);
+                  env->ReleaseStringUTFChars(audioPath, a_path);
+                  return env->NewStringUTF("Ошибка инициализации модели Whisper");
+              }
+
               std::vector<float> pcmf32;
-              if (!decode_audio_to_pcm16(a_path, pcmf32)) { env->ReleaseStringUTFChars(modelPath, m_path); env->ReleaseStringUTFChars(audioPath, a_path); return env->NewStringUTF("Ошибка декодирования аудио"); }
+              if (!decode_audio_to_pcm16k_mono(a_path, pcmf32)) {
+                  env->ReleaseStringUTFChars(modelPath, m_path);
+                  env->ReleaseStringUTFChars(audioPath, a_path);
+                  return env->NewStringUTF("Ошибка декодирования аудио");
+              }
 
               whisper_full_params wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
               wparams.language = "ru";
-              wparams.n_threads = 6;
+              wparams.n_threads = 4;
               wparams.print_progress = false;
               wparams.print_realtime = false;
 
-              if (whisper_full(g_ctx, wparams, pcmf32.data(), pcmf32.size()) != 0) { env->ReleaseStringUTFChars(modelPath, m_path); env->ReleaseStringUTFChars(audioPath, a_path); return env->NewStringUTF("Ошибка распознавания"); }
+              int status = whisper_full(g_ctx, wparams, pcmf32.data(), static_cast<int>(pcmf32.size()));
+              env->ReleaseStringUTFChars(modelPath, m_path);
+              env->ReleaseStringUTFChars(audioPath, a_path);
+
+              if (status != 0) {
+                  return env->NewStringUTF("Ошибка распознавания речи");
+              }
+
               std::string result;
-              for (int i = 0; i < whisper_full_n_segments(g_ctx); ++i) result += whisper_full_get_segment_text(g_ctx, i);
-              env->ReleaseStringUTFChars(modelPath, m_path); env->ReleaseStringUTFChars(audioPath, a_path);
+              int n_seg = whisper_full_n_segments(g_ctx);
+              for (int i = 0; i < n_seg; ++i) {
+                  const char* seg = whisper_full_get_segment_text(g_ctx, i);
+                  if (seg) result += seg;
+              }
               return env->NewStringUTF(result.c_str());
           }
           EOF
@@ -470,21 +489,22 @@ jobs:
           cm_path = "TMessagesProj/jni/CMakeLists.txt"
           with open(cm_path, "r", encoding="utf-8") as f:
               cm = f.read()
-          m = re.search(r'add_library\(\s*(tmessages\.\d+)', cm)
+          m = re.search(r'add_library\(\s*([^\s\)]+)', cm)
           tgt = m.group(1) if m else "tmessages.49"
           print(f"Detected CMake target: {tgt}")
-          addition = """
+          addition = f"""
           set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
           set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
           set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
           set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
           add_subdirectory(whisper)
-          target_sources(""" + tgt + """ PRIVATE whisper_jni.cpp)
-          target_include_directories(""" + tgt + """ PRIVATE whisper/include whisper/ggml/include)
-          target_link_libraries(""" + tgt + """ whisper)
+          target_sources({tgt} PRIVATE whisper_jni.cpp)
+          target_include_directories({tgt} PRIVATE whisper/include whisper/ggml/include)
+          target_link_libraries({tgt} whisper mediandk)
           """
-          with open(cm_path, "w", encoding="utf-8") as f:
-              f.write(cm + addition)
+          if "whisper_jni.cpp" not in cm:
+              with open(cm_path, "w", encoding="utf-8") as f:
+                  f.write(cm + addition)
           EOF
 
           cat << 'EOF' > TMessagesProj/src/main/java/org/telegram/messenger/WhisperHelper.java
@@ -505,19 +525,25 @@ jobs:
               public static String transcribeFile(File audioFile) {
                   try {
                       File dir = new File(ApplicationLoader.applicationContext.getFilesDir(), "whisper");
-                      if (!dir.exists()) dir.mkdirs();
+                      if (!dir.exists() && !dir.mkdirs()) {
+                          return "Не удалось создать директорию модели";
+                      }
                       File model = new File(dir, MODEL_NAME);
                       if (!model.exists() || model.length() < 150000000L) {
+                          File tmp = new File(dir, MODEL_NAME + ".tmp");
                           HttpURLConnection conn = (HttpURLConnection) new URL(MODEL_URL).openConnection();
                           conn.setInstanceFollowRedirects(true);
                           conn.setConnectTimeout(15000);
                           conn.setReadTimeout(60000);
-                          try (InputStream in = conn.getInputStream(); FileOutputStream out = new FileOutputStream(model)) {
+                          try (InputStream in = conn.getInputStream(); FileOutputStream out = new FileOutputStream(tmp)) {
                               byte[] buf = new byte[8192];
                               int len;
                               while ((len = in.read(buf)) != -1) {
                                   out.write(buf, 0, len);
                               }
+                          }
+                          if (!tmp.renameTo(model)) {
+                              return "Не удалось сохранить модель";
                           }
                       }
                       return transcribeNative(model.getAbsolutePath(), audioFile.getAbsolutePath());
@@ -528,38 +554,29 @@ jobs:
           }
           EOF
 
-          cat << 'EOF' >> TMessagesProj/build.gradle
-          android {
-              signingConfigs {
-                  release {
-                      storeFile file("my_telegram.jks")
-                      storePassword "${{ secrets.KEYSTORE_PASSWORD }}"
-                      keyAlias "${{ secrets.KEY_ALIAS }}"
-                      keyPassword "${{ secrets.KEY_PASSWORD }}"
-                  }
-              }
-              buildTypes {
-                  release {
-                      signingConfig signingConfigs.release
-                  }
-              }
-          }
-          EOF
-
       - name: Build arm64 Release APK
+        env:
+          STORE_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew :TMessagesProj_App:assembleAfatRelease --max-workers=4
+          SIGN_ARGS=""
+          if [ -f "TMessagesProj/my_telegram.jks" ] && [ -n "$STORE_PASS" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASS" ]; then
+            SIGN_ARGS="-Pandroid.injected.signing.store.file=my_telegram.jks -Pandroid.injected.signing.store.password=$STORE_PASS -Pandroid.injected.signing.key.alias=$KEY_ALIAS -Pandroid.injected.signing.key.password=$KEY_PASS"
+          fi
+          ./gradlew :TMessagesProj_App:assembleAfatRelease --max-workers=4 $SIGN_ARGS
 
       - name: Verify APK Package Name
         run: |
-          AAPT2=$(find $ANDROID_HOME/build-tools -name aapt2 | head -n 1)
+          AAPT2=$(find "$ANDROID_HOME/build-tools" -name aapt2 | head -n 1)
           APK_FILE=$(find TMessagesProj_App/build/outputs/apk -name "*.apk" | head -n 1)
           echo "APK Path: $APK_FILE"
-          $AAPT2 dump badging "$APK_FILE" | grep -E "package:|application-label:"
+          test -n "$APK_FILE"
+          "$AAPT2" dump badging "$APK_FILE" | grep -E "package:|application-label:"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: NotesClient-arm64
-          path: TMessagesProj_App/build/outputs/apk/afat/release/*.apk
+          path: TMessagesProj_App/build/outputs/apk/**/*.apk
