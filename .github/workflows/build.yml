@@ -18,17 +18,10 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Cache Gradle and CMake
-        uses: actions/cache@v4
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-            TMessagesProj/.cxx
-            TMessagesProj_App/.cxx
-          key: ${{ runner.os }}-gradle-stealth-v12-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-stealth-v12-
+          cache-read-only: false
 
       - name: Decode Keystore
         env:
@@ -40,7 +33,7 @@ jobs:
             echo "Warning: KEYSTORE_BASE64 secret is empty"
           fi
 
-      - name: Apply Stealth and Standalone Package Patches
+      - name: Apply Stealth, Standalone Package & Maven Mirror Patches
         env:
           RAW_API_ID: ${{ secrets.TG_API_ID }}
           RAW_API_HASH: ${{ secrets.TG_API_HASH }}
@@ -54,6 +47,27 @@ jobs:
           api_hash = os.environ.get("RAW_API_HASH", "").strip() or "b18441a1ff607e10a989891a5462e627"
           new_pkg = os.environ["NEW_PKG"]
           new_name = os.environ["NEW_NAME"]
+
+          # 0. Fix Maven Central 429 Too Many Requests by adding Google Maven Central Mirror
+          mirror_snippet = 'maven { url "https://maven-central.storage-download.googleapis.com/maven2" }\n        mavenCentral()'
+          mirror_kts_snippet = 'maven("https://maven-central.storage-download.googleapis.com/maven2")\n        mavenCentral()'
+
+          for g_file in glob.glob("**/*.gradle*", recursive=True):
+              if "/build/" in g_file or "\\build\\" in g_file or "/.gradle/" in g_file:
+                  continue
+              with open(g_file, "r", encoding="utf-8") as f:
+                  content = f.read()
+              new_content = content
+              if g_file.endswith(".kts"):
+                  new_content = re.sub(r'\bmavenCentral\(\)', mirror_kts_snippet, new_content)
+              else:
+                  new_content = re.sub(r'\bmavenCentral\(\)', mirror_snippet, new_content)
+              new_content = new_content.replace("https://repo.maven.apache.org/maven2", "https://maven-central.storage-download.googleapis.com/maven2")
+              new_content = new_content.replace("https://repo1.maven.org/maven2", "https://maven-central.storage-download.googleapis.com/maven2")
+              if new_content != content:
+                  with open(g_file, "w", encoding="utf-8") as f:
+                      f.write(new_content)
+                  print(f"Patched Maven mirror in {g_file}")
 
           # 1. API Keys
           bv_path = "TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java"
@@ -204,7 +218,7 @@ jobs:
               with open(au_path, "w", encoding="utf-8") as f:
                   f.write(au)
 
-          print("All stealth & standalone patches applied successfully!")
+          print("All stealth, standalone & mirror patches applied successfully!")
           EOF
 
       - name: Build arm64 Release APK
@@ -218,7 +232,7 @@ jobs:
           if [ -f "TMessagesProj/my_telegram.jks" ] && [ -n "$STORE_PASS" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASS" ]; then
             SIGN_ARGS="-Pandroid.injected.signing.store.file=my_telegram.jks -Pandroid.injected.signing.store.password=$STORE_PASS -Pandroid.injected.signing.key.alias=$KEY_ALIAS -Pandroid.injected.signing.key.password=$KEY_PASS"
           fi
-          ./gradlew :TMessagesProj_App:assembleAfatRelease --max-workers=4 $SIGN_ARGS
+          ./gradlew :TMessagesProj_App:assembleAfatRelease --max-workers=2 $SIGN_ARGS
 
       - name: Verify APK Package Name
         run: |
