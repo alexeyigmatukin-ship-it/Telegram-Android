@@ -305,7 +305,7 @@ jobs:
               with open(xml_path, "w", encoding="utf-8") as f:
                   f.write(xml)
 
-          # 7. CustomConfig: Full Theme Builder (Colors, Bubbles, Cards, Typography, Spacing, Glass UI), Local Premium & 5-Min Guest Guard
+          # 7. CustomConfig: Theme Builder, Media Send Options, Local Premium & 5-Min Guest Guard
           h_dir = "TMessagesProj/src/main/java/org/telegram/messenger"
           os.makedirs(h_dir, exist_ok=True)
           custom_cfg_code = """package org.telegram.messenger;
@@ -444,6 +444,63 @@ jobs:
                   if (!isGuestHandoverActive()) return 0L;
                   long rem = (getPrefs().getLong("guest_handover_until", 0L) - System.currentTimeMillis()) / 1000L;
                   return Math.max(0L, rem);
+              }
+
+              // --- Advanced Media Sending Settings ---
+              public static int getPhotoSendQuality() {
+                  return getPrefs().getInt("media_photo_quality", 1);
+              }
+
+              public static void setPhotoSendQuality(int mode) {
+                  getPrefs().edit().putInt("media_photo_quality", Math.max(0, Math.min(2, mode))).apply();
+              }
+
+              public static int getVideoSendProfile() {
+                  return getPrefs().getInt("media_video_profile", 1);
+              }
+
+              public static void setVideoSendProfile(int profile) {
+                  getPrefs().edit().putInt("media_video_profile", Math.max(0, Math.min(2, profile))).apply();
+              }
+
+              public static boolean isSendMediaAsFile() {
+                  return getPrefs().getBoolean("media_send_as_file", false);
+              }
+
+              public static void toggleSendMediaAsFile() {
+                  getPrefs().edit().putBoolean("media_send_as_file", !isSendMediaAsFile()).apply();
+              }
+
+              public static boolean isSendMediaSilently() {
+                  return getPrefs().getBoolean("media_send_silently", false);
+              }
+
+              public static void toggleSendMediaSilently() {
+                  getPrefs().edit().putBoolean("media_send_silently", !isSendMediaSilently()).apply();
+              }
+
+              public static boolean isStripMediaExif() {
+                  return getPrefs().getBoolean("media_strip_exif", true);
+              }
+
+              public static void toggleStripMediaExif() {
+                  getPrefs().edit().putBoolean("media_strip_exif", !isStripMediaExif()).apply();
+              }
+
+              public static boolean isAutoBackupSentToVault() {
+                  return getPrefs().getBoolean("media_auto_backup_vault", false);
+              }
+
+              public static void toggleAutoBackupSentToVault() {
+                  getPrefs().edit().putBoolean("media_auto_backup_vault", !isAutoBackupSentToVault()).apply();
+              }
+
+              public static int getSpoilerMediaMode() {
+                  return getPrefs().getInt("media_spoiler_mode", 0);
+              }
+
+              public static void setSpoilerMediaMode(int mode) {
+                  getPrefs().edit().putInt("media_spoiler_mode", Math.max(0, Math.min(2, mode))).apply();
               }
 
               // --- Custom Theme Studio (Full User Customization) ---
@@ -623,7 +680,7 @@ jobs:
           with open(f"{h_dir}/CustomConfig.java", "w", encoding="utf-8") as f:
               f.write(custom_cfg_code)
 
-          # 8. LocalWhisperHelper: Interactive Theme Builder Panel, Local RU Whisper, Guest Guard & Vault/Clipboard/Haptics
+          # 8. LocalWhisperHelper: Theme Studio, Media Send Options Panel, Local RU Whisper, Guest Guard & Vault
           whisper_helper_code = """package org.telegram.messenger;
 
           import android.app.Activity;
@@ -668,6 +725,10 @@ jobs:
           public class LocalWhisperHelper {
               private static final String MODEL_ASSET_PATH = "whisper/ggml-small-q5_1.bin";
 
+              private interface ColorApplyCallback {
+                  void onApply(int color);
+              }
+
               private static int dp(Context ctx, float value) {
                   float density = ctx.getResources().getDisplayMetrics().density;
                   return Math.round(value * density);
@@ -697,6 +758,218 @@ jobs:
                   }
               }
 
+              public static void openMediaSendSettingsPanel(final Activity activity) {
+                  if (activity == null || activity.isFinishing()) return;
+                  try {
+                      int accent = CustomConfig.getAccentColor();
+                      int surface = CustomConfig.getSurfaceColor();
+                      int bubble = CustomConfig.getBubbleColor();
+                      int textCol = CustomConfig.getTextColor();
+                      float cardR = CustomConfig.getCardCornerRadiusDp();
+                      float fontS = CustomConfig.getFontScaleMultiplier();
+
+                      ScrollView scroll = new ScrollView(activity);
+                      scroll.setBackgroundColor(surface);
+                      scroll.setPadding(dp(activity, 16), dp(activity, 16), dp(activity, 16), dp(activity, 24));
+
+                      LinearLayout root = new LinearLayout(activity);
+                      root.setOrientation(LinearLayout.VERTICAL);
+                      scroll.addView(root);
+
+                      LinearLayout photoCard = new LinearLayout(activity);
+                      photoCard.setOrientation(LinearLayout.VERTICAL);
+                      photoCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));
+                      photoCard.setBackground(makeCardDrawable(bubble, withAlpha(accent, 130), cardR, activity));
+
+                      TextView pTitle = new TextView(activity);
+                      pTitle.setText("Качество отправки фото");
+                      pTitle.setTextColor(accent);
+                      pTitle.setTypeface(Typeface.DEFAULT_BOLD);
+                      pTitle.setTextSize(13f * fontS);
+                      photoCard.addView(pTitle);
+
+                      final TextView pVal = new TextView(activity);
+                      final String[] photoLabels = new String[] {"Стандарт (85%)", "Высокое (95%)", "Оригинал без сжатия (100%)"};
+                      pVal.setText("Текущее: " + photoLabels[CustomConfig.getPhotoSendQuality()]);
+                      pVal.setTextColor(textCol);
+                      pVal.setTextSize(13f * fontS);
+                      pVal.setPadding(0, dp(activity, 4), 0, dp(activity, 8));
+                      photoCard.addView(pVal);
+
+                      LinearLayout pBtns = new LinearLayout(activity);
+                      pBtns.setOrientation(LinearLayout.HORIZONTAL);
+                      for (int i = 0; i < 3; i++) {
+                          final int mode = i;
+                          Button b = new Button(activity);
+                          b.setText(i == 0 ? "85%" : (i == 1 ? "95%" : "100%"));
+                          b.setAllCaps(false);
+                          b.setTextColor(textCol);
+                          b.setBackground(makeCardDrawable(withAlpha(surface, 210), withAlpha(accent, 120), 10f, activity));
+                          LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(activity, 38), 1f);
+                          if (i < 2) lp.rightMargin = dp(activity, 6);
+                          b.setLayoutParams(lp);
+                          b.setOnClickListener(v -> {
+                              CustomConfig.setPhotoSendQuality(mode);
+                              pVal.setText("Текущее: " + photoLabels[mode]);
+                              triggerPorscheTick(12, 100);
+                          });
+                          pBtns.addView(b);
+                      }
+                      photoCard.addView(pBtns);
+                      LinearLayout.LayoutParams pCardLp = new LinearLayout.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                      );
+                      pCardLp.bottomMargin = dp(activity, 12);
+                      root.addView(photoCard, pCardLp);
+
+                      LinearLayout vidCard = new LinearLayout(activity);
+                      vidCard.setOrientation(LinearLayout.VERTICAL);
+                      vidCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));
+                      vidCard.setBackground(makeCardDrawable(bubble, withAlpha(accent, 130), cardR, activity));
+
+                      TextView vTitle = new TextView(activity);
+                      vTitle.setText("Профиль отправки видео");
+                      vTitle.setTextColor(accent);
+                      vTitle.setTypeface(Typeface.DEFAULT_BOLD);
+                      vTitle.setTextSize(13f * fontS);
+                      vidCard.addView(vTitle);
+
+                      final TextView vVal = new TextView(activity);
+                      final String[] vidLabels = new String[] {"Баланс", "Высокий битрейт", "Исходный файл"};
+                      vVal.setText("Текущий: " + vidLabels[CustomConfig.getVideoSendProfile()]);
+                      vVal.setTextColor(textCol);
+                      vVal.setTextSize(13f * fontS);
+                      vVal.setPadding(0, dp(activity, 4), 0, dp(activity, 8));
+                      vidCard.addView(vVal);
+
+                      LinearLayout vBtns = new LinearLayout(activity);
+                      vBtns.setOrientation(LinearLayout.HORIZONTAL);
+                      for (int i = 0; i < 3; i++) {
+                          final int prof = i;
+                          Button b = new Button(activity);
+                          b.setText(i == 0 ? "Баланс" : (i == 1 ? "Высокий" : "Исходник"));
+                          b.setAllCaps(false);
+                          b.setTextColor(textCol);
+                          b.setBackground(makeCardDrawable(withAlpha(surface, 210), withAlpha(accent, 120), 10f, activity));
+                          LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(activity, 38), 1f);
+                          if (i < 2) lp.rightMargin = dp(activity, 6);
+                          b.setLayoutParams(lp);
+                          b.setOnClickListener(v -> {
+                              CustomConfig.setVideoSendProfile(prof);
+                              vVal.setText("Текущий: " + vidLabels[prof]);
+                              triggerPorscheTick(12, 100);
+                          });
+                          vBtns.addView(b);
+                      }
+                      vidCard.addView(vBtns);
+                      LinearLayout.LayoutParams vCardLp = new LinearLayout.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                      );
+                      vCardLp.bottomMargin = dp(activity, 12);
+                      root.addView(vidCard, vCardLp);
+
+                      LinearLayout spCard = new LinearLayout(activity);
+                      spCard.setOrientation(LinearLayout.VERTICAL);
+                      spCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));
+                      spCard.setBackground(makeCardDrawable(bubble, withAlpha(accent, 130), cardR, activity));
+
+                      TextView sTitle = new TextView(activity);
+                      sTitle.setText("Спойлеры для отправляемых медиа");
+                      sTitle.setTextColor(accent);
+                      sTitle.setTypeface(Typeface.DEFAULT_BOLD);
+                      sTitle.setTextSize(13f * fontS);
+                      spCard.addView(sTitle);
+
+                      final TextView sVal = new TextView(activity);
+                      final String[] spLabels = new String[] {"Выключены", "Авто-спойлер (фото/видео)", "Всегда спойлер"};
+                      sVal.setText("Текущее: " + spLabels[CustomConfig.getSpoilerMediaMode()]);
+                      sVal.setTextColor(textCol);
+                      sVal.setTextSize(13f * fontS);
+                      sVal.setPadding(0, dp(activity, 4), 0, dp(activity, 8));
+                      spCard.addView(sVal);
+
+                      LinearLayout sBtns = new LinearLayout(activity);
+                      sBtns.setOrientation(LinearLayout.HORIZONTAL);
+                      for (int i = 0; i < 3; i++) {
+                          final int sm = i;
+                          Button b = new Button(activity);
+                          b.setText(i == 0 ? "Выкл" : (i == 1 ? "Авто" : "Всегда"));
+                          b.setAllCaps(false);
+                          b.setTextColor(textCol);
+                          b.setBackground(makeCardDrawable(withAlpha(surface, 210), withAlpha(accent, 120), 10f, activity));
+                          LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(activity, 38), 1f);
+                          if (i < 2) lp.rightMargin = dp(activity, 6);
+                          b.setLayoutParams(lp);
+                          b.setOnClickListener(v -> {
+                              CustomConfig.setSpoilerMediaMode(sm);
+                              sVal.setText("Текущее: " + spLabels[sm]);
+                              triggerPorscheTick(12, 100);
+                          });
+                          sBtns.addView(b);
+                      }
+                      spCard.addView(sBtns);
+                      LinearLayout.LayoutParams sCardLp = new LinearLayout.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                      );
+                      sCardLp.bottomMargin = dp(activity, 12);
+                      root.addView(spCard, sCardLp);
+
+                      Switch exifSwitch = new Switch(activity);
+                      exifSwitch.setText("Очищать EXIF / геолокацию при отправке");
+                      exifSwitch.setTextColor(textCol);
+                      exifSwitch.setChecked(CustomConfig.isStripMediaExif());
+                      exifSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 6));
+                      exifSwitch.setOnCheckedChangeListener((btn, checked) -> {
+                          if (checked != CustomConfig.isStripMediaExif()) {
+                              CustomConfig.toggleStripMediaExif();
+                          }
+                      });
+                      root.addView(exifSwitch);
+
+                      Switch fileSwitch = new Switch(activity);
+                      fileSwitch.setText("Отправлять медиа как файл без пережатия");
+                      fileSwitch.setTextColor(textCol);
+                      fileSwitch.setChecked(CustomConfig.isSendMediaAsFile());
+                      fileSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 6));
+                      fileSwitch.setOnCheckedChangeListener((btn, checked) -> {
+                          if (checked != CustomConfig.isSendMediaAsFile()) {
+                              CustomConfig.toggleSendMediaAsFile();
+                          }
+                      });
+                      root.addView(fileSwitch);
+
+                      Switch silentSwitch = new Switch(activity);
+                      silentSwitch.setText("Отправлять медиа без звука (тихо)");
+                      silentSwitch.setTextColor(textCol);
+                      silentSwitch.setChecked(CustomConfig.isSendMediaSilently());
+                      silentSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 6));
+                      silentSwitch.setOnCheckedChangeListener((btn, checked) -> {
+                          if (checked != CustomConfig.isSendMediaSilently()) {
+                              CustomConfig.toggleSendMediaSilently();
+                          }
+                      });
+                      root.addView(silentSwitch);
+
+                      Switch vaultSwitch = new Switch(activity);
+                      vaultSwitch.setText("Копировать отправляемые медиа в NotesVault");
+                      vaultSwitch.setTextColor(textCol);
+                      vaultSwitch.setChecked(CustomConfig.isAutoBackupSentToVault());
+                      vaultSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 8));
+                      vaultSwitch.setOnCheckedChangeListener((btn, checked) -> {
+                          if (checked != CustomConfig.isAutoBackupSentToVault()) {
+                              CustomConfig.toggleAutoBackupSentToVault();
+                          }
+                      });
+                      root.addView(vaultSwitch);
+
+                      AlertDialog.Builder builder = new AlertDialog.Builder(activity);
+                      builder.setTitle("Notes • Настройки отправки медиа");
+                      builder.setView(scroll);
+                      builder.setPositiveButton("Сохранить", (d, w) -> triggerPorscheTick(18, 120));
+                      builder.show();
+                  } catch (Throwable ignored) {}
+              }
+
               public static void openThemeStudioPanel(final Activity activity) {
                   if (activity == null || activity.isFinishing()) return;
                   try {
@@ -717,7 +990,6 @@ jobs:
                       root.setOrientation(LinearLayout.VERTICAL);
                       scroll.addView(root);
 
-                      // Live Dual-Bubble Preview Card
                       final LinearLayout previewCard = new LinearLayout(activity);
                       previewCard.setOrientation(LinearLayout.VERTICAL);
                       previewCard.setPadding(dp(activity, 16), dp(activity, 14), dp(activity, 16), dp(activity, 14));
@@ -761,7 +1033,6 @@ jobs:
                       previewLp.bottomMargin = dp(activity, 14);
                       root.addView(previewCard, previewLp);
 
-                      // Target Element Selector + HEX Input
                       final LinearLayout targetCard = new LinearLayout(activity);
                       targetCard.setOrientation(LinearLayout.VERTICAL);
                       targetCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));
@@ -774,7 +1045,7 @@ jobs:
                       targetLabel.setTextSize(13f * initFontScale);
                       targetCard.addView(targetLabel);
 
-                      final int[] selectedSlot = new int[] {0}; // 0=Accent, 1=Surface, 2=InBubble, 3=OutBubble, 4=Text
+                      final int[] selectedSlot = new int[] {0};
                       final EditText hexInput = new EditText(activity);
                       hexInput.setText(CustomConfig.formatHex(initAccent));
                       hexInput.setTextColor(initText);
@@ -821,7 +1092,7 @@ jobs:
                           targetLabel.setText("Элемент: " + slotName + " (" + CustomConfig.formatHex(activeCol) + ")");
                       };
 
-                      final Runnable applyColorToSlot = (col) -> {
+                      final ColorApplyCallback applyColorToSlot = (col) -> {
                           if (selectedSlot[0] == 0) CustomConfig.setAccentColor(col);
                           else if (selectedSlot[0] == 1) CustomConfig.setSurfaceColor(col);
                           else if (selectedSlot[0] == 2) CustomConfig.setBubbleColor(col);
@@ -884,7 +1155,7 @@ jobs:
                           else if (selectedSlot[0] == 3) fallback = CustomConfig.getOutBubbleColor();
                           else if (selectedSlot[0] == 4) fallback = CustomConfig.getTextColor();
                           int parsed = safeParseHex(hexInput.getText().toString(), fallback);
-                          applyColorToSlot.run(parsed);
+                          applyColorToSlot.onApply(parsed);
                       });
                       hexRow.addView(applyHexBtn);
                       targetCard.addView(hexRow);
@@ -895,7 +1166,6 @@ jobs:
                       tLp.bottomMargin = dp(activity, 12);
                       root.addView(targetCard, tLp);
 
-                      // Color Swatches Strip (Accent + Surfaces + Bubbles)
                       TextView swLabel = new TextView(activity);
                       swLabel.setText("Готовые оттенки для выбранного элемента");
                       swLabel.setTextColor(initText);
@@ -918,7 +1188,7 @@ jobs:
                           dotLp.rightMargin = dp(activity, 8);
                           dot.setLayoutParams(dotLp);
                           dot.setBackground(makeCardDrawable(sw, Color.WHITE, 17f, activity));
-                          dot.setOnClickListener(v -> applyColorToSlot.run(sw));
+                          dot.setOnClickListener(v -> applyColorToSlot.onApply(sw));
                           swRow.addView(dot);
                       }
                       swScroll.addView(swRow);
@@ -928,7 +1198,6 @@ jobs:
                       swScrollLp.bottomMargin = dp(activity, 14);
                       root.addView(swScroll, swScrollLp);
 
-                      // Bubble Radius Slider
                       final TextView brLabel = new TextView(activity);
                       brLabel.setText("Скругление баблов: " + Math.round(initBubbleRadius) + " dp");
                       brLabel.setTextColor(initText);
@@ -950,7 +1219,6 @@ jobs:
                       });
                       root.addView(brSeek);
 
-                      // Card Radius Slider
                       final TextView crLabel = new TextView(activity);
                       crLabel.setText("Скругление карточек: " + Math.round(initCardRadius) + " dp");
                       crLabel.setTextColor(initText);
@@ -973,7 +1241,6 @@ jobs:
                       });
                       root.addView(crSeek);
 
-                      // Font Scale Slider
                       final TextView fsLabel = new TextView(activity);
                       fsLabel.setText("Масштаб шрифта: " + String.format("%.2fx", initFontScale));
                       fsLabel.setTextColor(initText);
@@ -996,7 +1263,6 @@ jobs:
                       });
                       root.addView(fsSeek);
 
-                      // Compact Spacing & Reset Button
                       Switch compactSwitch = new Switch(activity);
                       compactSwitch.setText("Компактный интервал сообщений");
                       compactSwitch.setTextColor(initText);
@@ -1288,7 +1554,7 @@ jobs:
                   with open(mc_path, "w", encoding="utf-8") as f:
                       f.write(mc)
 
-          # 10. Patch ChatActivity: Theme Studio Panel, 5-Min Guest Guard, Local Premium & Stealth Toggles
+          # 10. Patch ChatActivity: Theme Studio Panel, Media Send Settings, 5-Min Guest Guard, Local Premium & Stealth Toggles
           for ca_path in glob.glob("TMessagesProj/src/main/java/**/ChatActivity.java", recursive=True):
               try:
                   with open(ca_path, "r", encoding="utf-8") as f:
@@ -1324,7 +1590,15 @@ jobs:
           EOF
 
       - name: Build arm64 Release APK
-        run: ./gradlew :TMessagesProj_App:assembleAfatRelease --no-daemon --stacktrace
+        env:
+          GRADLE_OPTS: "-Xmx4g -Dorg.gradle.jvmargs=-Xmx4g -Dkotlin.daemon.jvm.options=-Xmx2g"
+        run: |
+          set -o pipefail
+          ./gradlew :TMessagesProj_App:assembleAfatRelease --max-workers=2 --no-daemon --stacktrace 2>&1 | tee gradle_build.log || {
+            echo "=== GRADLE FAILURE SUMMARY ==="
+            grep -n -C 15 -E "FAILURE:|What went wrong:|error:|Exception" gradle_build.log | tail -n 80 || true
+            exit 1
+          }
 
       - name: Verify APK Package Name & Launchable Activity
         run: |
