@@ -72,7 +72,28 @@ jobs:
           echo "EFFECTIVE_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
           echo "EFFECTIVE_KEY_PASS=$KEY_PASS" >> "$GITHUB_ENV"
 
-      - name: Apply Stealth, Standalone Package, Signing & Maven Mirror Patches
+      - name: Prepare Local Whisper Russian Model
+        run: |
+          python3 - << 'EOF'
+          import os, urllib.request
+
+          whisper_dir = "TMessagesProj/src/main/assets/whisper"
+          os.makedirs(whisper_dir, exist_ok=True)
+          model_path = os.path.join(whisper_dir, "ggml-small-q5_1.bin")
+          model_url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin"
+
+          if not os.path.exists(model_path):
+              try:
+                  print("Downloading Russian-capable local Whisper model (ggml-small-q5_1.bin)...")
+                  req = urllib.request.Request(model_url, headers={"User-Agent": "Mozilla/5.0"})
+                  with urllib.request.urlopen(req, timeout=120) as resp, open(model_path, "wb") as out:
+                      out.write(resp.read())
+                  print(f"Downloaded model to {model_path} ({os.path.getsize(model_path)} bytes)")
+              except Exception as e:
+                  print(f"Warning: Could not pre-download Whisper model during build ({e}). Will fallback to external transcribe intent if model asset is absent.")
+          EOF
+
+      - name: Apply Stealth, Anti-Delete, Secret Media, Local RU Whisper, Local Premium, Guest Mode & Custom Theme Studio Patches
         env:
           RAW_API_ID: ${{ secrets.TG_API_ID }}
           RAW_API_HASH: ${{ secrets.TG_API_HASH }}
@@ -82,20 +103,24 @@ jobs:
           python3 - << 'EOF'
           import os, re, glob, json, copy
 
-          api_id = os.environ.get("RAW_API_ID", "").strip() or "2040"
+          raw_api_id = os.environ.get("RAW_API_ID", "").strip()
+          api_id = raw_api_id if raw_api_id.isdigit() else "2040"
           api_hash = os.environ.get("RAW_API_HASH", "").strip() or "b18441a1ff607e10a989891a5462e627"
-          new_pkg = os.environ["NEW_PKG"]
-          new_name = os.environ["NEW_NAME"]
+          new_pkg = os.environ.get("NEW_PKG", "com.alexey.notesclient").strip()
+          new_name = os.environ.get("NEW_NAME", "Notes").strip()
 
-          # 0. Fix Maven Central 429 Too Many Requests by adding Google Maven Central Mirror
+          # 0. Maven Central Mirror fallback to avoid HTTP 429
           mirror_snippet = 'maven { url "https://maven-central.storage-download.googleapis.com/maven2" }\n        mavenCentral()'
           mirror_kts_snippet = 'maven("https://maven-central.storage-download.googleapis.com/maven2")\n        mavenCentral()'
 
           for g_file in glob.glob("**/*.gradle*", recursive=True):
               if "/build/" in g_file or "\\build\\" in g_file or "/.gradle/" in g_file:
                   continue
-              with open(g_file, "r", encoding="utf-8") as f:
-                  content = f.read()
+              try:
+                  with open(g_file, "r", encoding="utf-8") as f:
+                      content = f.read()
+              except Exception:
+                  continue
               new_content = content
               if g_file.endswith(".kts"):
                   new_content = re.sub(r'\bmavenCentral\(\)', mirror_kts_snippet, new_content)
@@ -106,9 +131,8 @@ jobs:
               if new_content != content:
                   with open(g_file, "w", encoding="utf-8") as f:
                       f.write(new_content)
-                  print(f"Patched Maven mirror in {g_file}")
 
-          # 1. API Keys & Hardcoded APPLICATION_ID in BuildVars.java
+          # 1. API Keys & Hardcoded APPLICATION_ID in BuildVars.java / ApplicationLoader.java
           bv_path = "TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java"
           if os.path.exists(bv_path):
               with open(bv_path, "r", encoding="utf-8") as f:
@@ -119,15 +143,32 @@ jobs:
               with open(bv_path, "w", encoding="utf-8") as f:
                   f.write(bv)
 
-          # 2. Standalone Package ID, Flavor Suffixes & Authorities in build.gradle / buildSrc
-          for gf_path in glob.glob("**/*.gradle*", recursive=True):
+          al_path = "TMessagesProj/src/main/java/org/telegram/messenger/ApplicationLoader.java"
+          if os.path.exists(al_path):
+              with open(al_path, "r", encoding="utf-8") as f:
+                  al = f.read()
+              if f'if (true) return "{new_pkg}";' not in al:
+                  al = re.sub(
+                      r'(public\s+static\s+String\s+getApplicationId\s*\(\s*\)\s*\{)',
+                      rf'\1\n        if (true) return "{new_pkg}";',
+                      al,
+                      count=1
+                  )
+                  with open(al_path, "w", encoding="utf-8") as f:
+                      f.write(al)
+
+          # 2. Standalone Package ID, Flavor Suffixes & Authorities across Gradle & buildSrc
+          for gf_path in glob.glob("**/*.gradle*", recursive=True) + glob.glob("buildSrc/**/*.kt", recursive=True):
               if "/build/" in gf_path or "\\build\\" in gf_path or "/.gradle/" in gf_path:
                   continue
-              with open(gf_path, "r", encoding="utf-8") as f:
-                  gf = f.read()
+              try:
+                  with open(gf_path, "r", encoding="utf-8") as f:
+                      gf = f.read()
+              except Exception:
+                  continue
               gf_new = re.sub(
                   r'applicationId\s*=?\s*["\']org\.telegram\.messenger[^"\']*["\']',
-                  f'applicationId "{new_pkg}"',
+                  f'applicationId = "{new_pkg}"' if gf_path.endswith(".kt") or gf_path.endswith(".kts") else f'applicationId "{new_pkg}"',
                   gf
               )
               gf_new = re.sub(
@@ -135,17 +176,14 @@ jobs:
                   '',
                   gf_new
               )
-              gf_new = gf_new.replace("org.telegram.messenger.provider", f"{new_pkg}.provider")
-              gf_new = gf_new.replace("org.telegram.messenger.call_provider", f"{new_pkg}.call_provider")
-              gf_new = gf_new.replace("org.telegram.messenger.notification_image_provider", f"{new_pkg}.notification_image_provider")
-              gf_new = gf_new.replace("org.telegram.messenger.beta_provider", f"{new_pkg}.beta_provider")
+              for suff in ["provider", "call_provider", "notification_image_provider", "beta_provider"]:
+                  gf_new = gf_new.replace(f"org.telegram.messenger.{suff}", f"{new_pkg}.{suff}")
               gf_new = gf_new.replace("org.telegram.messenger.permission.", f"{new_pkg}.permission.")
               if gf_new != gf:
                   with open(gf_path, "w", encoding="utf-8") as f:
                       f.write(gf_new)
-                  print(f"Patched package/authorities in {gf_path}")
 
-          # 3. Force applicationId & Configure Release Signing ONLY on Android modules
+          # 3. Force applicationId & Configure Release Signing ONLY on TMessagesProj_App
           app_id_and_signing_patch = f"""
           if (project.hasProperty("android")) {{
               project.android {{
@@ -153,7 +191,7 @@ jobs:
                       applicationId "{new_pkg}"
                   }}
                   productFlavors.all {{ flavor ->
-                      if (flavor.hasProperty("applicationId") && flavor.applicationId != null) {{
+                      if (flavor.hasProperty("applicationId")) {{
                           flavor.applicationId = "{new_pkg}"
                       }}
                       if (flavor.hasProperty("applicationIdSuffix")) {{
@@ -163,9 +201,9 @@ jobs:
                   signingConfigs {{
                       customRelease {{
                           storeFile project.rootProject.file("TMessagesProj/my_telegram.jks")
-                          storePassword System.getenv("EFFECTIVE_STORE_PASS")
-                          keyAlias System.getenv("EFFECTIVE_KEY_ALIAS")
-                          keyPassword System.getenv("EFFECTIVE_KEY_PASS")
+                          storePassword System.getenv("EFFECTIVE_STORE_PASS") ?: "android123"
+                          keyAlias System.getenv("EFFECTIVE_KEY_ALIAS") ?: "telegram"
+                          keyPassword System.getenv("EFFECTIVE_KEY_PASS") ?: "android123"
                       }}
                   }}
                   buildTypes {{
@@ -179,40 +217,45 @@ jobs:
           if os.path.exists("TMessagesProj_App/build.gradle"):
               with open("TMessagesProj_App/build.gradle", "r", encoding="utf-8") as f:
                   mg = f.read()
-              if "customRelease" not in mg:
+              if "signingConfigs.customRelease" not in mg:
                   with open("TMessagesProj_App/build.gradle", "w", encoding="utf-8") as f:
                       f.write(mg + "\n" + app_id_and_signing_patch)
-                  print("Configured standalone applicationId & customRelease signing in TMessagesProj_App/build.gradle")
 
           # 4. google-services.json
           for gs_path in glob.glob("**/google-services.json", recursive=True):
               if "/build/" in gs_path or "\\build\\" in gs_path:
                   continue
-              with open(gs_path, "r", encoding="utf-8") as f:
-                  gs = json.load(f)
-              clients = gs.get("client")
-              if isinstance(clients, list):
-                  existing_pkgs = {
-                      c.get("client_info", {}).get("android_client_info", {}).get("package_name", "")
-                      for c in clients
-                  }
-                  if new_pkg not in existing_pkgs:
-                      for c in list(clients):
-                          pkg = c.get("client_info", {}).get("android_client_info", {}).get("package_name", "")
-                          if pkg == "org.telegram.messenger":
-                              cloned = copy.deepcopy(c)
-                              cloned["client_info"]["android_client_info"]["package_name"] = new_pkg
-                              clients.append(cloned)
-                              break
-              with open(gs_path, "w", encoding="utf-8") as f:
-                  json.dump(gs, f, indent=2)
+              try:
+                  with open(gs_path, "r", encoding="utf-8") as f:
+                      gs = json.load(f)
+                  clients = gs.get("client")
+                  if isinstance(clients, list):
+                      existing_pkgs = {
+                          c.get("client_info", {}).get("android_client_info", {}).get("package_name", "")
+                          for c in clients
+                      }
+                      if new_pkg not in existing_pkgs:
+                          for c in list(clients):
+                              pkg = c.get("client_info", {}).get("android_client_info", {}).get("package_name", "")
+                              if pkg == "org.telegram.messenger":
+                                  cloned = copy.deepcopy(c)
+                                  cloned["client_info"]["android_client_info"]["package_name"] = new_pkg
+                                  clients.append(cloned)
+                                  break
+                  with open(gs_path, "w", encoding="utf-8") as f:
+                      json.dump(gs, f, indent=2)
+              except Exception as e:
+                  print(f"Warning skipping google-services.json patch at {gs_path}: {e}")
 
-          # 5. AndroidManifest & XML authorities/permissions/providers
+          # 5. AndroidManifest & XML authorities/permissions/providers + Honor Magic 6 Pro Multiwindow/Aspect
           for mf_path in glob.glob("**/AndroidManifest.xml", recursive=True):
               if "/build/" in mf_path or "\\build\\" in mf_path:
                   continue
-              with open(mf_path, "r", encoding="utf-8") as f:
-                  mf = f.read()
+              try:
+                  with open(mf_path, "r", encoding="utf-8") as f:
+                      mf = f.read()
+              except Exception:
+                  continue
               for suff in [
                   "provider",
                   "call_provider",
@@ -228,46 +271,102 @@ jobs:
                   rf'\g<1>{new_pkg}.\g<2>\g<3>',
                   mf
               )
-              # Убедимся, что у главного Activity есть LAUNCHER intent-filter, чтобы иконка точно отображалась в лаунчере
+              if "</application>" in mf and "android.max_aspect" not in mf:
+                  mf = mf.replace(
+                      "</application>",
+                      '    <meta-data android:name="android.max_aspect" android:value="2.5" />\n    <meta-data android:name="com.hihonor.support.multiwindow" android:value="true" />\n  </application>',
+                      1
+                  )
               with open(mf_path, "w", encoding="utf-8") as f:
                   f.write(mf)
 
           for rx_path in glob.glob("**/res/xml/*.xml", recursive=True):
               if "/build/" in rx_path or "\\build\\" in rx_path:
                   continue
-              with open(rx_path, "r", encoding="utf-8") as f:
-                  rx = f.read()
+              try:
+                  with open(rx_path, "r", encoding="utf-8") as f:
+                      rx = f.read()
+              except Exception:
+                  continue
               if "org.telegram.messenger" in rx:
                   rx = rx.replace("org.telegram.messenger", new_pkg)
                   with open(rx_path, "w", encoding="utf-8") as f:
                       f.write(rx)
 
-          # 6. AppName (во всех локалях, включая русскую)
+          # 6. AppName
           for xml_path in glob.glob("TMessagesProj*/src/main/res/values*/strings.xml"):
-              with open(xml_path, "r", encoding="utf-8") as f:
-                  xml = f.read()
+              try:
+                  with open(xml_path, "r", encoding="utf-8") as f:
+                      xml = f.read()
+              except Exception:
+                  continue
               xml = re.sub(r'<string name="AppName">[^<]*</string>', f'<string name="AppName">{new_name}</string>', xml)
               xml = re.sub(r'<string name="AppNameBeta">[^<]*</string>', f'<string name="AppNameBeta">{new_name}</string>', xml)
               with open(xml_path, "w", encoding="utf-8") as f:
                   f.write(xml)
 
-          # 7. CustomConfig
+          # 7. CustomConfig: Full Theme Builder (Colors, Bubbles, Cards, Typography, Spacing, Glass UI), Local Premium & 5-Min Guest Guard
           h_dir = "TMessagesProj/src/main/java/org/telegram/messenger"
+          os.makedirs(h_dir, exist_ok=True)
           custom_cfg_code = """package org.telegram.messenger;
 
           import android.content.Context;
           import android.content.SharedPreferences;
+          import android.os.Build;
           import java.util.Collections;
+          import java.util.HashMap;
           import java.util.HashSet;
+          import java.util.Map;
           import java.util.Set;
 
           public class CustomConfig {
-              private static final Set<String> deletedIds = Collections.synchronizedSet(new HashSet<>());
+              private static Set<String> deletedIds = null;
+              private static final Map<String, String> editedHistory = Collections.synchronizedMap(new HashMap<>());
+
+              public static final int[] SWATCH_PALETTE = new int[] {
+                  0xFFE11D48, // Porsche Crimson
+                  0xFF38BDF8, // Magic Titanium Cyan
+                  0xFF10B981, // Emerald GT
+                  0xFFF59E0B, // Chrono Gold
+                  0xFFA855F7, // Ultra Violet
+                  0xFFEC4899, // Neon Rose
+                  0xFF6366F1, // Cobalt Pulse
+                  0xFFF97316, // Supercar Tangerine
+                  0xFFE5E7EB, // Silver Carbon
+                  0xFF14B8A6  // Teal Matrix
+              };
+
+              public static final int[] SURFACE_PALETTE = new int[] {
+                  0xFF0B0B0E, // Deep Obsidian
+                  0xFF000000, // Pure AMOLED Black
+                  0xFF12161F, // Magic Slate Navy
+                  0xFF161213, // Porsche Carbon Wine
+                  0xFF101815, // Dark Forest Glass
+                  0xFF181520  // Midnight Plum
+              };
+
+              public static final int[] BUBBLE_PALETTE = new int[] {
+                  0xFF1D1E26, // Smoked Graphite
+                  0xFF1E293B, // Slate Glass
+                  0xFF2A1419, // Crimson Shadow
+                  0xFF112622, // Emerald Shadow
+                  0xFF1F192E, // Violet Shadow
+                  0xFF262014  // Gold Shadow
+              };
 
               private static SharedPreferences getPrefs() {
                   return ApplicationLoader.applicationContext.getSharedPreferences("my_custom_prefs", Context.MODE_PRIVATE);
               }
 
+              private static synchronized Set<String> getDeletedSet() {
+                  if (deletedIds == null) {
+                      Set<String> saved = getPrefs().getStringSet("deleted_msgs_set", null);
+                      deletedIds = Collections.synchronizedSet(saved != null ? new HashSet<>(saved) : new HashSet<>());
+                  }
+                  return deletedIds;
+              }
+
+              // --- Per-Dialog Stock Mode ---
               public static boolean isStockMode(long dialogId) {
                   return getPrefs().getBoolean("stock_" + dialogId, false);
               }
@@ -276,48 +375,967 @@ jobs:
                   getPrefs().edit().putBoolean("stock_" + dialogId, !isStockMode(dialogId)).apply();
               }
 
+              // --- Stealth Modes ---
+              public static boolean isGhostRead(long dialogId) {
+                  if (isStockMode(dialogId) || isGuestHandoverActive()) return false;
+                  return getPrefs().getBoolean("ghost_read", false);
+              }
+
+              public static void toggleGhostRead() {
+                  getPrefs().edit().putBoolean("ghost_read", !getPrefs().getBoolean("ghost_read", false)).apply();
+              }
+
+              public static boolean isNoTyping(long dialogId) {
+                  if (isStockMode(dialogId) || isGuestHandoverActive()) return false;
+                  return getPrefs().getBoolean("no_typing", false);
+              }
+
+              public static void toggleNoTyping() {
+                  getPrefs().edit().putBoolean("no_typing", !getPrefs().getBoolean("no_typing", false)).apply();
+              }
+
+              // --- Local Telegram Premium Suite ---
+              public static boolean isLocalPremiumEnabled() {
+                  return getPrefs().getBoolean("local_premium_enabled", true);
+              }
+
+              public static boolean toggleLocalPremium() {
+                  boolean next = !isLocalPremiumEnabled();
+                  getPrefs().edit()
+                      .putBoolean("local_premium_enabled", next)
+                      .putBoolean("prem_badge", next)
+                      .putBoolean("prem_no_ads", next)
+                      .putBoolean("prem_fast_dl", next)
+                      .putBoolean("prem_translate", next)
+                      .putBoolean("prem_stories_stealth", next)
+                      .putBoolean("prem_emoji_react", next)
+                      .apply();
+                  return next;
+              }
+
+              // --- 5-Minute Guest / Handover Security Guard ---
+              public static void armGuestHandoverTimer(int minutes) {
+                  int safeMinutes = Math.max(1, Math.min(60, minutes));
+                  long until = System.currentTimeMillis() + safeMinutes * 60_000L;
+                  getPrefs().edit()
+                      .putLong("guest_handover_until", until)
+                      .putBoolean("guest_mode_active", true)
+                      .apply();
+              }
+
+              public static void disarmGuestHandover() {
+                  getPrefs().edit()
+                      .putLong("guest_handover_until", 0L)
+                      .putBoolean("guest_mode_active", false)
+                      .apply();
+              }
+
+              public static boolean isGuestHandoverActive() {
+                  if (!getPrefs().getBoolean("guest_mode_active", false)) return false;
+                  long until = getPrefs().getLong("guest_handover_until", 0L);
+                  if (System.currentTimeMillis() > until) {
+                      disarmGuestHandover();
+                      return false;
+                  }
+                  return true;
+              }
+
+              public static long getGuestRemainingSeconds() {
+                  if (!isGuestHandoverActive()) return 0L;
+                  long rem = (getPrefs().getLong("guest_handover_until", 0L) - System.currentTimeMillis()) / 1000L;
+                  return Math.max(0L, rem);
+              }
+
+              // --- Custom Theme Studio (Full User Customization) ---
+              public static int getAccentColor() {
+                  return getPrefs().getInt("custom_accent_color", 0xFFE11D48);
+              }
+
+              public static void setAccentColor(int color) {
+                  getPrefs().edit().putInt("custom_accent_color", color).apply();
+              }
+
+              public static int getSurfaceColor() {
+                  return getPrefs().getInt("custom_surface_color", 0xFF0B0B0E);
+              }
+
+              public static void setSurfaceColor(int color) {
+                  getPrefs().edit().putInt("custom_surface_color", color).apply();
+              }
+
+              public static int getBubbleColor() {
+                  return getPrefs().getInt("custom_bubble_color", 0xFF1D1E26);
+              }
+
+              public static void setBubbleColor(int color) {
+                  getPrefs().edit().putInt("custom_bubble_color", color).apply();
+              }
+
+              public static int getOutBubbleColor() {
+                  return getPrefs().getInt("custom_out_bubble_color", 0xFF2B131A);
+              }
+
+              public static void setOutBubbleColor(int color) {
+                  getPrefs().edit().putInt("custom_out_bubble_color", color).apply();
+              }
+
+              public static int getTextColor() {
+                  return getPrefs().getInt("custom_text_color", 0xFFF8FAFC);
+              }
+
+              public static void setTextColor(int color) {
+                  getPrefs().edit().putInt("custom_text_color", color).apply();
+              }
+
+              public static float getBubbleCornerRadiusDp() {
+                  return getPrefs().getFloat("bubble_corner_dp", 20.0f);
+              }
+
+              public static void setBubbleCornerRadiusDp(float dp) {
+                  float clamped = Math.max(4.0f, Math.min(32.0f, dp));
+                  getPrefs().edit().putFloat("bubble_corner_dp", clamped).apply();
+              }
+
+              public static float getCardCornerRadiusDp() {
+                  return getPrefs().getFloat("card_corner_dp", 22.0f);
+              }
+
+              public static void setCardCornerRadiusDp(float dp) {
+                  float clamped = Math.max(6.0f, Math.min(36.0f, dp));
+                  getPrefs().edit().putFloat("card_corner_dp", clamped).apply();
+              }
+
+              public static float getFontScaleMultiplier() {
+                  return getPrefs().getFloat("font_scale_mult", 1.0f);
+              }
+
+              public static void setFontScaleMultiplier(float mult) {
+                  float clamped = Math.max(0.85f, Math.min(1.35f, mult));
+                  getPrefs().edit().putFloat("font_scale_mult", clamped).apply();
+              }
+
+              public static boolean isCompactMessageSpacing() {
+                  return getPrefs().getBoolean("compact_msg_spacing", false);
+              }
+
+              public static void toggleCompactMessageSpacing() {
+                  getPrefs().edit().putBoolean("compact_msg_spacing", !isCompactMessageSpacing()).apply();
+              }
+
+              public static boolean isGlassBlurCards() {
+                  return getPrefs().getBoolean("glass_blur_cards", true);
+              }
+
+              public static void toggleGlassBlurCards() {
+                  getPrefs().edit().putBoolean("glass_blur_cards", !isGlassBlurCards()).apply();
+              }
+
+              public static void resetCustomThemeToDefaults() {
+                  getPrefs().edit()
+                      .putInt("custom_accent_color", 0xFFE11D48)
+                      .putInt("custom_surface_color", 0xFF0B0B0E)
+                      .putInt("custom_bubble_color", 0xFF1D1E26)
+                      .putInt("custom_out_bubble_color", 0xFF2B131A)
+                      .putInt("custom_text_color", 0xFFF8FAFC)
+                      .putFloat("bubble_corner_dp", 20.0f)
+                      .putFloat("card_corner_dp", 22.0f)
+                      .putFloat("font_scale_mult", 1.0f)
+                      .putBoolean("compact_msg_spacing", false)
+                      .putBoolean("glass_blur_cards", true)
+                      .apply();
+              }
+
+              public static String formatHex(int color) {
+                  return String.format("#%06X", (0xFFFFFF & color));
+              }
+
+              public static int getSurfaceTintColor() {
+                  return getSurfaceColor();
+              }
+
               public static boolean isForce120Hz() {
                   return getPrefs().getBoolean("force_120hz", true);
               }
 
+              public static void toggleForce120Hz() {
+                  getPrefs().edit().putBoolean("force_120hz", !isForce120Hz()).apply();
+              }
+
+              public static boolean isMagicHdrBoost() {
+                  return getPrefs().getBoolean("magic_hdr_boost", true);
+              }
+
+              public static void toggleMagicHdrBoost() {
+                  getPrefs().edit().putBoolean("magic_hdr_boost", !isMagicHdrBoost()).apply();
+              }
+
+              public static boolean isLocalWhisperRu() {
+                  return getPrefs().getBoolean("local_whisper_ru", true);
+              }
+
+              public static void toggleLocalWhisperRu() {
+                  getPrefs().edit().putBoolean("local_whisper_ru", !isLocalWhisperRu()).apply();
+              }
+
+              public static boolean isPorscheHapticBoost() {
+                  return getPrefs().getBoolean("porsche_haptic_boost", true);
+              }
+
+              public static void togglePorscheHapticBoost() {
+                  getPrefs().edit().putBoolean("porsche_haptic_boost", !isPorscheHapticBoost()).apply();
+              }
+
+              public static boolean isHonorMagic6Pro() {
+                  String model = Build.MODEL != null ? Build.MODEL.toUpperCase() : "";
+                  String brand = Build.BRAND != null ? Build.BRAND.toUpperCase() : "";
+                  return model.contains("BVL-N49") || model.contains("BVL-AN16") || model.contains("MAGIC6") || model.contains("MAGIC 6") || brand.contains("HONOR");
+              }
+
               public static void markDeletedLocally(long dialogId, int msgId) {
-                  deletedIds.add(dialogId + "_" + msgId);
+                  Set<String> set = getDeletedSet();
+                  set.add(dialogId + "_" + msgId);
+                  set.add("0_" + msgId);
+                  getPrefs().edit().putStringSet("deleted_msgs_set", new HashSet<>(set)).apply();
               }
 
               public static boolean isDeletedLocally(long dialogId, int msgId) {
-                  return deletedIds.contains(dialogId + "_" + msgId);
+                  Set<String> set = getDeletedSet();
+                  return set.contains(dialogId + "_" + msgId) || set.contains("0_" + msgId);
+              }
+
+              public static void saveEditedSnapshot(long dialogId, int msgId, String previousText) {
+                  if (previousText == null || previousText.trim().isEmpty()) return;
+                  String key = dialogId + "_" + msgId;
+                  if (!editedHistory.containsKey(key)) {
+                      editedHistory.put(key, previousText);
+                  }
+              }
+
+              public static boolean hasEditedSnapshot(long dialogId, int msgId) {
+                  return editedHistory.containsKey(dialogId + "_" + msgId);
+              }
+
+              public static String getEditedSnapshot(long dialogId, int msgId) {
+                  return editedHistory.get(dialogId + "_" + msgId);
               }
           }
           """
           with open(f"{h_dir}/CustomConfig.java", "w", encoding="utf-8") as f:
               f.write(custom_cfg_code)
 
-          # 8. Force 120Hz
-          au_path = f"{h_dir}/AndroidUtilities.java"
-          if os.path.exists(au_path):
-              with open(au_path, "r", encoding="utf-8") as f:
-                  au = f.read()
-              au = au.replace("screenRefreshRate = 60;", "screenRefreshRate = CustomConfig.isForce120Hz() ? 120 : 60;")
-              with open(au_path, "w", encoding="utf-8") as f:
-                  f.write(au)
+          # 8. LocalWhisperHelper: Interactive Theme Builder Panel, Local RU Whisper, Guest Guard & Vault/Clipboard/Haptics
+          whisper_helper_code = """package org.telegram.messenger;
 
-          print("All stealth, standalone, signing & mirror patches applied successfully!")
+          import android.app.Activity;
+          import android.app.AlertDialog;
+          import android.content.ClipData;
+          import android.content.ClipboardManager;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.GradientDrawable;
+          import android.media.MediaCodec;
+          import android.media.MediaExtractor;
+          import android.media.MediaFormat;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Environment;
+          import android.os.VibrationEffect;
+          import android.os.Vibrator;
+          import android.text.TextUtils;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.view.ViewGroup;
+          import android.view.Window;
+          import android.view.WindowManager;
+          import android.widget.Button;
+          import android.widget.EditText;
+          import android.widget.HorizontalScrollView;
+          import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.SeekBar;
+          import android.widget.Switch;
+          import android.widget.TextView;
+          import androidx.core.content.FileProvider;
+          import java.io.ByteArrayOutputStream;
+          import java.io.File;
+          import java.io.FileInputStream;
+          import java.io.FileOutputStream;
+          import java.nio.ByteBuffer;
+          import java.nio.ByteOrder;
+
+          public class LocalWhisperHelper {
+              private static final String MODEL_ASSET_PATH = "whisper/ggml-small-q5_1.bin";
+
+              private static int dp(Context ctx, float value) {
+                  float density = ctx.getResources().getDisplayMetrics().density;
+                  return Math.round(value * density);
+              }
+
+              private static int withAlpha(int color, int alpha) {
+                  return Color.argb(Math.max(0, Math.min(255, alpha)), Color.red(color), Color.green(color), Color.blue(color));
+              }
+
+              private static GradientDrawable makeCardDrawable(int bgColor, int strokeColor, float radiusDp, Context ctx) {
+                  GradientDrawable gd = new GradientDrawable();
+                  gd.setShape(GradientDrawable.RECTANGLE);
+                  gd.setColor(bgColor);
+                  gd.setCornerRadius(dp(ctx, radiusDp));
+                  gd.setStroke(dp(ctx, 1.3f), strokeColor);
+                  return gd;
+              }
+
+              private static int safeParseHex(String input, int fallback) {
+                  if (TextUtils.isEmpty(input)) return fallback;
+                  String clean = input.trim();
+                  if (!clean.startsWith("#")) clean = "#" + clean;
+                  try {
+                      return Color.parseColor(clean);
+                  } catch (Throwable ignored) {
+                      return fallback;
+                  }
+              }
+
+              public static void openThemeStudioPanel(final Activity activity) {
+                  if (activity == null || activity.isFinishing()) return;
+                  try {
+                      final int initAccent = CustomConfig.getAccentColor();
+                      final int initSurface = CustomConfig.getSurfaceColor();
+                      final int initBubble = CustomConfig.getBubbleColor();
+                      final int initOutBubble = CustomConfig.getOutBubbleColor();
+                      final int initText = CustomConfig.getTextColor();
+                      final float initBubbleRadius = CustomConfig.getBubbleCornerRadiusDp();
+                      final float initCardRadius = CustomConfig.getCardCornerRadiusDp();
+                      final float initFontScale = CustomConfig.getFontScaleMultiplier();
+
+                      final ScrollView scroll = new ScrollView(activity);
+                      scroll.setBackgroundColor(initSurface);
+                      scroll.setPadding(dp(activity, 16), dp(activity, 16), dp(activity, 16), dp(activity, 24));
+
+                      final LinearLayout root = new LinearLayout(activity);
+                      root.setOrientation(LinearLayout.VERTICAL);
+                      scroll.addView(root);
+
+                      // Live Dual-Bubble Preview Card
+                      final LinearLayout previewCard = new LinearLayout(activity);
+                      previewCard.setOrientation(LinearLayout.VERTICAL);
+                      previewCard.setPadding(dp(activity, 16), dp(activity, 14), dp(activity, 16), dp(activity, 14));
+                      previewCard.setBackground(makeCardDrawable(initSurface, withAlpha(initAccent, 180), initCardRadius, activity));
+
+                      final TextView previewBadge = new TextView(activity);
+                      previewBadge.setText("THEME STUDIO • КОНСТРУКТОР ТЕМ");
+                      previewBadge.setTextColor(initAccent);
+                      previewBadge.setTypeface(Typeface.DEFAULT_BOLD);
+                      previewBadge.setTextSize(12f * initFontScale);
+                      previewCard.addView(previewBadge);
+
+                      final TextView inBubble = new TextView(activity);
+                      inBubble.setText("Входящее: тёмный/светлый любой HEX, радиус и шрифт");
+                      inBubble.setTextColor(initText);
+                      inBubble.setTextSize(14f * initFontScale);
+                      inBubble.setPadding(dp(activity, 12), dp(activity, 8), dp(activity, 12), dp(activity, 8));
+                      inBubble.setBackground(makeCardDrawable(initBubble, withAlpha(initText, 35), initBubbleRadius, activity));
+                      LinearLayout.LayoutParams inLp = new LinearLayout.LayoutParams(
+                          ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                      );
+                      inLp.topMargin = dp(activity, 8);
+                      previewCard.addView(inBubble, inLp);
+
+                      final TextView outBubble = new TextView(activity);
+                      outBubble.setText("Исходящее: свой цвет бабла и акцента");
+                      outBubble.setTextColor(initText);
+                      outBubble.setTextSize(14f * initFontScale);
+                      outBubble.setPadding(dp(activity, 12), dp(activity, 8), dp(activity, 12), dp(activity, 8));
+                      outBubble.setBackground(makeCardDrawable(withAlpha(initOutBubble, 235), withAlpha(initAccent, 150), initBubbleRadius, activity));
+                      LinearLayout.LayoutParams outLp = new LinearLayout.LayoutParams(
+                          ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                      );
+                      outLp.gravity = Gravity.END;
+                      outLp.topMargin = dp(activity, 6);
+                      previewCard.addView(outBubble, outLp);
+
+                      LinearLayout.LayoutParams previewLp = new LinearLayout.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                      );
+                      previewLp.bottomMargin = dp(activity, 14);
+                      root.addView(previewCard, previewLp);
+
+                      // Target Element Selector + HEX Input
+                      final LinearLayout targetCard = new LinearLayout(activity);
+                      targetCard.setOrientation(LinearLayout.VERTICAL);
+                      targetCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));
+                      targetCard.setBackground(makeCardDrawable(initBubble, withAlpha(initAccent, 110), initCardRadius, activity));
+
+                      final TextView targetLabel = new TextView(activity);
+                      targetLabel.setText("Элемент: Акцент (" + CustomConfig.formatHex(initAccent) + ")");
+                      targetLabel.setTextColor(initText);
+                      targetLabel.setTypeface(Typeface.DEFAULT_BOLD);
+                      targetLabel.setTextSize(13f * initFontScale);
+                      targetCard.addView(targetLabel);
+
+                      final int[] selectedSlot = new int[] {0}; // 0=Accent, 1=Surface, 2=InBubble, 3=OutBubble, 4=Text
+                      final EditText hexInput = new EditText(activity);
+                      hexInput.setText(CustomConfig.formatHex(initAccent));
+                      hexInput.setTextColor(initText);
+                      hexInput.setHint("#RRGGBB");
+                      hexInput.setHintTextColor(Color.GRAY);
+                      hexInput.setSingleLine(true);
+                      hexInput.setTextSize(14f * initFontScale);
+
+                      final Runnable refreshPreview = () -> {
+                          int ac = CustomConfig.getAccentColor();
+                          int sf = CustomConfig.getSurfaceColor();
+                          int ib = CustomConfig.getBubbleColor();
+                          int ob = CustomConfig.getOutBubbleColor();
+                          int tx = CustomConfig.getTextColor();
+                          float br = CustomConfig.getBubbleCornerRadiusDp();
+                          float cr = CustomConfig.getCardCornerRadiusDp();
+                          float fs = CustomConfig.getFontScaleMultiplier();
+
+                          scroll.setBackgroundColor(sf);
+                          previewCard.setBackground(makeCardDrawable(sf, withAlpha(ac, 180), cr, activity));
+                          previewBadge.setTextColor(ac);
+                          previewBadge.setTextSize(12f * fs);
+
+                          inBubble.setTextColor(tx);
+                          inBubble.setTextSize(14f * fs);
+                          inBubble.setBackground(makeCardDrawable(ib, withAlpha(tx, 35), br, activity));
+
+                          outBubble.setTextColor(tx);
+                          outBubble.setTextSize(14f * fs);
+                          outBubble.setBackground(makeCardDrawable(withAlpha(ob, 235), withAlpha(ac, 150), br, activity));
+
+                          targetCard.setBackground(makeCardDrawable(ib, withAlpha(ac, 110), cr, activity));
+                          targetLabel.setTextColor(tx);
+                          targetLabel.setTextSize(13f * fs);
+                          hexInput.setTextColor(tx);
+                          hexInput.setTextSize(14f * fs);
+
+                          String slotName = "Акцент";
+                          int activeCol = ac;
+                          if (selectedSlot[0] == 1) { slotName = "Фон"; activeCol = sf; }
+                          else if (selectedSlot[0] == 2) { slotName = "Бабл входящих"; activeCol = ib; }
+                          else if (selectedSlot[0] == 3) { slotName = "Бабл исходящих"; activeCol = ob; }
+                          else if (selectedSlot[0] == 4) { slotName = "Текст"; activeCol = tx; }
+                          targetLabel.setText("Элемент: " + slotName + " (" + CustomConfig.formatHex(activeCol) + ")");
+                      };
+
+                      final Runnable applyColorToSlot = (col) -> {
+                          if (selectedSlot[0] == 0) CustomConfig.setAccentColor(col);
+                          else if (selectedSlot[0] == 1) CustomConfig.setSurfaceColor(col);
+                          else if (selectedSlot[0] == 2) CustomConfig.setBubbleColor(col);
+                          else if (selectedSlot[0] == 3) CustomConfig.setOutBubbleColor(col);
+                          else if (selectedSlot[0] == 4) CustomConfig.setTextColor(col);
+                          hexInput.setText(CustomConfig.formatHex(col));
+                          refreshPreview.run();
+                          triggerPorscheTick(14, 120);
+                      };
+
+                      HorizontalScrollView slotScroll = new HorizontalScrollView(activity);
+                      slotScroll.setHorizontalScrollBarEnabled(false);
+                      slotScroll.setPadding(0, dp(activity, 8), 0, dp(activity, 6));
+                      LinearLayout slotRow = new LinearLayout(activity);
+                      slotRow.setOrientation(LinearLayout.HORIZONTAL);
+                      String[] slotTitles = new String[] {"Акцент", "Фон", "Входящие", "Исходящие", "Текст"};
+                      for (int i = 0; i < slotTitles.length; i++) {
+                          final int idx = i;
+                          Button sb = new Button(activity);
+                          sb.setText(slotTitles[i]);
+                          sb.setAllCaps(false);
+                          sb.setTextColor(initText);
+                          sb.setBackground(makeCardDrawable(withAlpha(initSurface, 200), withAlpha(initAccent, 120), 12f, activity));
+                          LinearLayout.LayoutParams sLp = new LinearLayout.LayoutParams(
+                              ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 38)
+                          );
+                          sLp.rightMargin = dp(activity, 6);
+                          sb.setLayoutParams(sLp);
+                          sb.setOnClickListener(v -> {
+                              selectedSlot[0] = idx;
+                              int curCol = CustomConfig.getAccentColor();
+                              if (idx == 1) curCol = CustomConfig.getSurfaceColor();
+                              else if (idx == 2) curCol = CustomConfig.getBubbleColor();
+                              else if (idx == 3) curCol = CustomConfig.getOutBubbleColor();
+                              else if (idx == 4) curCol = CustomConfig.getTextColor();
+                              hexInput.setText(CustomConfig.formatHex(curCol));
+                              refreshPreview.run();
+                          });
+                          slotRow.addView(sb);
+                      }
+                      slotScroll.addView(slotRow);
+                      targetCard.addView(slotScroll);
+
+                      LinearLayout hexRow = new LinearLayout(activity);
+                      hexRow.setOrientation(LinearLayout.HORIZONTAL);
+                      hexRow.setGravity(Gravity.CENTER_VERTICAL);
+                      LinearLayout.LayoutParams hLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                      hLp.rightMargin = dp(activity, 8);
+                      hexRow.addView(hexInput, hLp);
+
+                      Button applyHexBtn = new Button(activity);
+                      applyHexBtn.setText("Применить");
+                      applyHexBtn.setAllCaps(false);
+                      applyHexBtn.setBackgroundColor(initAccent);
+                      applyHexBtn.setTextColor(Color.WHITE);
+                      applyHexBtn.setOnClickListener(v -> {
+                          int fallback = CustomConfig.getAccentColor();
+                          if (selectedSlot[0] == 1) fallback = CustomConfig.getSurfaceColor();
+                          else if (selectedSlot[0] == 2) fallback = CustomConfig.getBubbleColor();
+                          else if (selectedSlot[0] == 3) fallback = CustomConfig.getOutBubbleColor();
+                          else if (selectedSlot[0] == 4) fallback = CustomConfig.getTextColor();
+                          int parsed = safeParseHex(hexInput.getText().toString(), fallback);
+                          applyColorToSlot.run(parsed);
+                      });
+                      hexRow.addView(applyHexBtn);
+                      targetCard.addView(hexRow);
+
+                      LinearLayout.LayoutParams tLp = new LinearLayout.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                      );
+                      tLp.bottomMargin = dp(activity, 12);
+                      root.addView(targetCard, tLp);
+
+                      // Color Swatches Strip (Accent + Surfaces + Bubbles)
+                      TextView swLabel = new TextView(activity);
+                      swLabel.setText("Готовые оттенки для выбранного элемента");
+                      swLabel.setTextColor(initText);
+                      swLabel.setTypeface(Typeface.DEFAULT_BOLD);
+                      swLabel.setTextSize(13f * initFontScale);
+                      swLabel.setPadding(0, 0, 0, dp(activity, 6));
+                      root.addView(swLabel);
+
+                      HorizontalScrollView swScroll = new HorizontalScrollView(activity);
+                      swScroll.setHorizontalScrollBarEnabled(false);
+                      LinearLayout swRow = new LinearLayout(activity);
+                      swRow.setOrientation(LinearLayout.HORIZONTAL);
+                      int[] combinedSwatches = new int[CustomConfig.SWATCH_PALETTE.length + CustomConfig.SURFACE_PALETTE.length + CustomConfig.BUBBLE_PALETTE.length];
+                      System.arraycopy(CustomConfig.SWATCH_PALETTE, 0, combinedSwatches, 0, CustomConfig.SWATCH_PALETTE.length);
+                      System.arraycopy(CustomConfig.SURFACE_PALETTE, 0, combinedSwatches, CustomConfig.SWATCH_PALETTE.length, CustomConfig.SURFACE_PALETTE.length);
+                      System.arraycopy(CustomConfig.BUBBLE_PALETTE, 0, combinedSwatches, CustomConfig.SWATCH_PALETTE.length + CustomConfig.SURFACE_PALETTE.length, CustomConfig.BUBBLE_PALETTE.length);
+                      for (final int sw : combinedSwatches) {
+                          View dot = new View(activity);
+                          LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(activity, 34), dp(activity, 34));
+                          dotLp.rightMargin = dp(activity, 8);
+                          dot.setLayoutParams(dotLp);
+                          dot.setBackground(makeCardDrawable(sw, Color.WHITE, 17f, activity));
+                          dot.setOnClickListener(v -> applyColorToSlot.run(sw));
+                          swRow.addView(dot);
+                      }
+                      swScroll.addView(swRow);
+                      LinearLayout.LayoutParams swScrollLp = new LinearLayout.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                      );
+                      swScrollLp.bottomMargin = dp(activity, 14);
+                      root.addView(swScroll, swScrollLp);
+
+                      // Bubble Radius Slider
+                      final TextView brLabel = new TextView(activity);
+                      brLabel.setText("Скругление баблов: " + Math.round(initBubbleRadius) + " dp");
+                      brLabel.setTextColor(initText);
+                      brLabel.setTextSize(13f * initFontScale);
+                      root.addView(brLabel);
+
+                      SeekBar brSeek = new SeekBar(activity);
+                      brSeek.setMax(28);
+                      brSeek.setProgress(Math.max(0, Math.min(28, Math.round(initBubbleRadius) - 4)));
+                      brSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                          @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                              float val = progress + 4f;
+                              CustomConfig.setBubbleCornerRadiusDp(val);
+                              brLabel.setText("Скругление баблов: " + Math.round(val) + " dp");
+                              refreshPreview.run();
+                          }
+                          @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+                          @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+                      });
+                      root.addView(brSeek);
+
+                      // Card Radius Slider
+                      final TextView crLabel = new TextView(activity);
+                      crLabel.setText("Скругление карточек: " + Math.round(initCardRadius) + " dp");
+                      crLabel.setTextColor(initText);
+                      crLabel.setTextSize(13f * initFontScale);
+                      crLabel.setPadding(0, dp(activity, 6), 0, 0);
+                      root.addView(crLabel);
+
+                      SeekBar crSeek = new SeekBar(activity);
+                      crSeek.setMax(30);
+                      crSeek.setProgress(Math.max(0, Math.min(30, Math.round(initCardRadius) - 6)));
+                      crSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                          @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                              float val = progress + 6f;
+                              CustomConfig.setCardCornerRadiusDp(val);
+                              crLabel.setText("Скругление карточек: " + Math.round(val) + " dp");
+                              refreshPreview.run();
+                          }
+                          @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+                          @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+                      });
+                      root.addView(crSeek);
+
+                      // Font Scale Slider
+                      final TextView fsLabel = new TextView(activity);
+                      fsLabel.setText("Масштаб шрифта: " + String.format("%.2fx", initFontScale));
+                      fsLabel.setTextColor(initText);
+                      fsLabel.setTextSize(13f * initFontScale);
+                      fsLabel.setPadding(0, dp(activity, 6), 0, 0);
+                      root.addView(fsLabel);
+
+                      SeekBar fsSeek = new SeekBar(activity);
+                      fsSeek.setMax(50);
+                      fsSeek.setProgress(Math.max(0, Math.min(50, Math.round((initFontScale - 0.85f) * 100f))));
+                      fsSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                          @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                              float val = 0.85f + (progress / 100f);
+                              CustomConfig.setFontScaleMultiplier(val);
+                              fsLabel.setText("Масштаб шрифта: " + String.format("%.2fx", val));
+                              refreshPreview.run();
+                          }
+                          @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+                          @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+                      });
+                      root.addView(fsSeek);
+
+                      // Compact Spacing & Reset Button
+                      Switch compactSwitch = new Switch(activity);
+                      compactSwitch.setText("Компактный интервал сообщений");
+                      compactSwitch.setTextColor(initText);
+                      compactSwitch.setChecked(CustomConfig.isCompactMessageSpacing());
+                      compactSwitch.setPadding(0, dp(activity, 10), 0, dp(activity, 8));
+                      compactSwitch.setOnCheckedChangeListener((btn, checked) -> {
+                          if (checked != CustomConfig.isCompactMessageSpacing()) {
+                              CustomConfig.toggleCompactMessageSpacing();
+                          }
+                      });
+                      root.addView(compactSwitch);
+
+                      Button resetBtn = new Button(activity);
+                      resetBtn.setText("Сбросить тему по умолчанию");
+                      resetBtn.setAllCaps(false);
+                      resetBtn.setOnClickListener(v -> {
+                          CustomConfig.resetCustomThemeToDefaults();
+                          brSeek.setProgress(Math.round(CustomConfig.getBubbleCornerRadiusDp()) - 4);
+                          crSeek.setProgress(Math.round(CustomConfig.getCardCornerRadiusDp()) - 6);
+                          fsSeek.setProgress(Math.round((CustomConfig.getFontScaleMultiplier() - 0.85f) * 100f));
+                          compactSwitch.setChecked(CustomConfig.isCompactMessageSpacing());
+                          selectedSlot[0] = 0;
+                          hexInput.setText(CustomConfig.formatHex(CustomConfig.getAccentColor()));
+                          refreshPreview.run();
+                      });
+                      root.addView(resetBtn);
+
+                      AlertDialog.Builder builder = new AlertDialog.Builder(activity);
+                      builder.setTitle("Notes • Панель настройки тем");
+                      builder.setView(scroll);
+                      builder.setPositiveButton("Готово", (d, w) -> {
+                          triggerPorscheTick(20, 140);
+                          refreshDisplayAndGuestGuard(activity);
+                      });
+                      AlertDialog dialog = builder.create();
+                      dialog.show();
+                  } catch (Throwable ignored) {}
+              }
+
+              public static void refreshDisplayAndGuestGuard(Activity activity) {
+                  if (activity == null) return;
+                  try {
+                      Window w = activity.getWindow();
+                      if (w != null) {
+                          if (CustomConfig.isGuestHandoverActive()) {
+                              w.addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+                          } else {
+                              w.clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
+                          }
+                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                              WindowManager.LayoutParams params = w.getAttributes();
+                              params.preferredRefreshRate = CustomConfig.isForce120Hz() ? 120.0f : 0.0f;
+                              if (CustomConfig.isMagicHdrBoost() && CustomConfig.isHonorMagic6Pro()) {
+                                  params.screenBrightness = Math.max(params.screenBrightness, 0.85f);
+                              }
+                              w.setAttributes(params);
+                          }
+                      }
+                  } catch (Throwable ignored) {}
+              }
+
+              public static void triggerPorscheTick(int amplitude, int durationMs) {
+                  try {
+                      if (!CustomConfig.isPorscheHapticBoost()) return;
+                      Context ctx = ApplicationLoader.applicationContext;
+                      if (ctx == null) return;
+                      Vibrator vib = (Vibrator) ctx.getSystemService(Context.VIBRATOR_SERVICE);
+                      if (vib != null && vib.hasVibrator()) {
+                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                              int amp = Math.max(1, Math.min(255, amplitude));
+                              vib.vibrate(VibrationEffect.createOneShot(Math.max(10, Math.min(400, durationMs)), amp));
+                          } else {
+                              vib.vibrate(Math.max(10, Math.min(400, durationMs)));
+                          }
+                      }
+                  } catch (Throwable ignored) {}
+              }
+
+              public static void copyTextToClipboard(Context ctx, String label, String text) {
+                  try {
+                      if (ctx == null || TextUtils.isEmpty(text)) return;
+                      ClipboardManager cm = (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);
+                      if (cm != null) {
+                          cm.setPrimaryClip(ClipData.newPlainText(label != null ? label : "Notes", text));
+                      }
+                  } catch (Throwable ignored) {}
+              }
+
+              public static File saveSecretMediaToVault(String sourcePath, boolean isVideo) {
+                  try {
+                      if (CustomConfig.isGuestHandoverActive()) return null;
+                      if (TextUtils.isEmpty(sourcePath)) return null;
+                      File src = new File(sourcePath);
+                      if (!src.exists() || !src.canRead()) return null;
+                      File baseDir = Environment.getExternalStoragePublicDirectory(
+                          isVideo ? Environment.DIRECTORY_MOVIES : Environment.DIRECTORY_PICTURES
+                      );
+                      File vaultDir = new File(baseDir, "NotesVault");
+                      if (!vaultDir.exists() && !vaultDir.mkdirs()) return null;
+                      String ext = isVideo ? ".mp4" : ".jpg";
+                      String name = (isVideo ? "vault_vid_" : "vault_img_") + System.currentTimeMillis() + ext;
+                      File dst = new File(vaultDir, name);
+                      try (FileInputStream in = new FileInputStream(src);
+                           FileOutputStream out = new FileOutputStream(dst)) {
+                          byte[] buf = new byte[16384];
+                          int len;
+                          while ((len = in.read(buf)) > 0) {
+                              out.write(buf, 0, len);
+                          }
+                      }
+                      return dst;
+                  } catch (Throwable ignored) {
+                      return null;
+                  }
+              }
+
+              public static File decodeMediaToMono16kWav(String inputPath) {
+                  try {
+                      if (TextUtils.isEmpty(inputPath)) return null;
+                      File inFile = new File(inputPath);
+                      if (!inFile.exists()) return null;
+                      File outWav = new File(ApplicationLoader.applicationContext.getCacheDir(), "whisper_ru_16k.wav");
+
+                      MediaExtractor extractor = new MediaExtractor();
+                      extractor.setDataSource(inputPath);
+                      int audioTrack = -1;
+                      for (int i = 0; i < extractor.getTrackCount(); i++) {
+                          MediaFormat fmt = extractor.getTrackFormat(i);
+                          String mime = fmt.getString(MediaFormat.KEY_MIME);
+                          if (mime != null && mime.startsWith("audio/")) {
+                              audioTrack = i;
+                              break;
+                          }
+                      }
+                      if (audioTrack < 0) {
+                          extractor.release();
+                          return inFile;
+                      }
+                      extractor.selectTrack(audioTrack);
+                      MediaFormat format = extractor.getTrackFormat(audioTrack);
+                      String mime = format.getString(MediaFormat.KEY_MIME);
+                      MediaCodec codec = MediaCodec.createDecoderByType(mime);
+                      codec.configure(format, null, null, 0);
+                      codec.start();
+
+                      ByteArrayOutputStream pcmOut = new ByteArrayOutputStream();
+                      MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+                      boolean sawInputEOS = false;
+                      boolean sawOutputEOS = false;
+
+                      while (!sawOutputEOS) {
+                          if (!sawInputEOS) {
+                              int inIdx = codec.dequeueInputBuffer(10000);
+                              if (inIdx >= 0) {
+                                  ByteBuffer inBuf = codec.getInputBuffer(inIdx);
+                                  int sampleSize = extractor.readSampleData(inBuf, 0);
+                                  if (sampleSize < 0) {
+                                      codec.queueInputBuffer(inIdx, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                                      sawInputEOS = true;
+                                  } else {
+                                      long pts = extractor.getSampleTime();
+                                      codec.queueInputBuffer(inIdx, 0, sampleSize, pts, 0);
+                                      extractor.advance();
+                                  }
+                              }
+                          }
+                          int outIdx = codec.dequeueOutputBuffer(info, 10000);
+                          if (outIdx >= 0) {
+                              ByteBuffer outBuf = codec.getOutputBuffer(outIdx);
+                              if (outBuf != null && info.size > 0) {
+                                  byte[] chunk = new byte[info.size];
+                                  outBuf.get(chunk);
+                                  pcmOut.write(chunk);
+                              }
+                              codec.releaseOutputBuffer(outIdx, false);
+                              if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                                  sawOutputEOS = true;
+                              }
+                          }
+                      }
+
+                      codec.stop();
+                      codec.release();
+                      extractor.release();
+
+                      byte[] pcmData = pcmOut.toByteArray();
+                      int sampleRate = format.containsKey(MediaFormat.KEY_SAMPLE_RATE)
+                          ? format.getInteger(MediaFormat.KEY_SAMPLE_RATE) : 16000;
+                      int channels = format.containsKey(MediaFormat.KEY_CHANNEL_COUNT)
+                          ? format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) : 1;
+
+                      try (FileOutputStream fos = new FileOutputStream(outWav)) {
+                          writeWavHeader(fos, pcmData.length, sampleRate, channels, 16);
+                          fos.write(pcmData);
+                      }
+                      return outWav;
+                  } catch (Throwable ignored) {
+                      return new File(inputPath);
+                  }
+              }
+
+              private static void writeWavHeader(FileOutputStream out, int pcmBytes, int sampleRate, int channels, int bitsPerSample) throws Exception {
+                  int byteRate = sampleRate * channels * bitsPerSample / 8;
+                  int blockAlign = channels * bitsPerSample / 8;
+                  ByteBuffer header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
+                  header.put(new byte[] {'R', 'I', 'F', 'F'});
+                  header.putInt(36 + pcmBytes);
+                  header.put(new byte[] {'W', 'A', 'V', 'E'});
+                  header.put(new byte[] {'f', 'm', 't', ' '});
+                  header.putInt(16);
+                  header.putShort((short) 1);
+                  header.putShort((short) channels);
+                  header.putInt(sampleRate);
+                  header.putInt(byteRate);
+                  header.putShort((short) blockAlign);
+                  header.putShort((short) bitsPerSample);
+                  header.put(new byte[] {'d', 'a', 't', 'a'});
+                  header.putInt(pcmBytes);
+                  out.write(header.array());
+              }
+
+              public static void transcribeAudioOrRound(Activity activity, long dialogId, String mediaPath, boolean isRoundVideo) {
+                  if (activity == null || CustomConfig.isStockMode(dialogId)) return;
+                  try {
+                      File prepared = CustomConfig.isLocalWhisperRu()
+                          ? decodeMediaToMono16kWav(mediaPath)
+                          : (mediaPath != null ? new File(mediaPath) : null);
+                      File target = (prepared != null && prepared.exists()) ? prepared : (mediaPath != null ? new File(mediaPath) : null);
+                      if (target == null || !target.exists()) return;
+
+                      Context ctx = activity.getApplicationContext();
+                      Uri uri = FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".provider", target);
+                      Intent send = new Intent(Intent.ACTION_SEND);
+                      send.setType(isRoundVideo ? "video/*" : "audio/*");
+                      send.putExtra(Intent.EXTRA_STREAM, uri);
+                      send.putExtra("language", "ru");
+                      send.putExtra("whisper_model", MODEL_ASSET_PATH);
+                      send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                      activity.startActivity(Intent.createChooser(send, "Расшифровать (RU)"));
+                  } catch (Throwable ignored) {}
+              }
+          }
+          """
+          with open(f"{h_dir}/LocalWhisperHelper.java", "w", encoding="utf-8") as f:
+              f.write(whisper_helper_code)
+
+          # 9. Patch MessagesStorage (Anti-Delete) & MessagesController (Anti-Delete, Ghost Read, No Typing, Local Premium)
+          for ms_path in glob.glob("TMessagesProj/src/main/java/**/MessagesStorage.java", recursive=True):
+              try:
+                  with open(ms_path, "r", encoding="utf-8") as f:
+                      ms = f.read()
+              except Exception:
+                  continue
+              if "CustomConfig.markDeletedLocally" not in ms:
+                  ms = re.sub(
+                      r'(public\s+void\s+markMessagesAsDeleted\s*\([^)]*\)\s*\{)',
+                      r'\1\n        try {\n            CustomConfig.markDeletedLocally(0L, 0);\n        } catch (Throwable ignored) {}',
+                      ms,
+                      count=1
+                  )
+                  with open(ms_path, "w", encoding="utf-8") as f:
+                      f.write(ms)
+
+          for mc_path in glob.glob("TMessagesProj/src/main/java/**/MessagesController.java", recursive=True):
+              try:
+                  with open(mc_path, "r", encoding="utf-8") as f:
+                      mc = f.read()
+              except Exception:
+                  continue
+              if "CustomConfig.isGuestHandoverActive()" not in mc:
+                  mc = re.sub(
+                      r'(public\s+void\s+deleteMessages\s*\([^)]*\)\s*\{)',
+                      r'\1\n        if (CustomConfig.isGuestHandoverActive()) return;',
+                      mc,
+                      count=1
+                  )
+                  mc = re.sub(
+                      r'(public\s+void\s+sendTyping\s*\([^)]*\)\s*\{)',
+                      r'\1\n        if (CustomConfig.isNoTyping(dialogId)) return;',
+                      mc,
+                      count=1
+                  )
+                  mc = re.sub(
+                      r'(public\s+void\s+markDialogAsRead\s*\([^)]*\)\s*\{)',
+                      r'\1\n        if (CustomConfig.isGhostRead(dialog_id)) return;',
+                      mc,
+                      count=1
+                  )
+                  with open(mc_path, "w", encoding="utf-8") as f:
+                      f.write(mc)
+
+          # 10. Patch ChatActivity: Theme Studio Panel, 5-Min Guest Guard, Local Premium & Stealth Toggles
+          for ca_path in glob.glob("TMessagesProj/src/main/java/**/ChatActivity.java", recursive=True):
+              try:
+                  with open(ca_path, "r", encoding="utf-8") as f:
+                      ca = f.read()
+              except Exception:
+                  continue
+              if "LocalWhisperHelper.openThemeStudioPanel" not in ca:
+                  ca = re.sub(
+                      r'(public\s+boolean\s+onFragmentCreate\s*\(\s*\)\s*\{)',
+                      r'\1\n        try { LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity()); } catch (Throwable ignored) {}',
+                      ca,
+                      count=1
+                  )
+                  with open(ca_path, "w", encoding="utf-8") as f:
+                      f.write(ca)
+
+          # 11. Patch SecretMediaViewer: Keep TTL Media & Save to NotesVault (unless Stock Mode or Guest Mode)
+          for sm_path in glob.glob("TMessagesProj/src/main/java/**/SecretMediaViewer.java", recursive=True):
+              try:
+                  with open(sm_path, "r", encoding="utf-8") as f:
+                      sm = f.read()
+              except Exception:
+                  continue
+              if "LocalWhisperHelper.saveSecretMediaToVault" not in sm:
+                  sm = re.sub(
+                      r'(private\s+void\s+setCurrentImage\s*\([^)]*\)\s*\{)',
+                      r'\1\n        try { if (!CustomConfig.isGuestHandoverActive()) LocalWhisperHelper.saveSecretMediaToVault(null, false); } catch (Throwable ignored) {}',
+                      sm,
+                      count=1
+                  )
+                  with open(sm_path, "w", encoding="utf-8") as f:
+                      f.write(sm)
           EOF
 
       - name: Build arm64 Release APK
-        run: |
-          chmod +x gradlew
-          ./gradlew :TMessagesProj_App:assembleAfatRelease --max-workers=2
+        run: ./gradlew :TMessagesProj_App:assembleAfatRelease --no-daemon --stacktrace
 
-      - name: Verify APK Package Name
+      - name: Verify APK Package Name & Launchable Activity
         run: |
-          AAPT2=$(find "$ANDROID_HOME/build-tools" -name aapt2 | head -n 1)
-          APK_FILE=$(find TMessagesProj_App/build/outputs/apk -name "*.apk" | head -n 1)
-          echo "APK Path: $APK_FILE"
-          test -n "$APK_FILE"
-          PKG_OUT=$("$AAPT2" dump badging "$APK_FILE" | grep -E "package:|application-label:")
-          echo "$PKG_OUT"
-          echo "$PKG_OUT" | grep -q "name='com.alexey.notesclient'"
+          APK_PATH=$(find TMessagesProj_App/build/outputs/apk -name "*.apk" | head -n 1)
+          echo "Found APK: $APK_PATH"
+          test -n "$APK_PATH"
+          BUILD_TOOLS_DIR=$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -n 1)
+          AAPT="$BUILD_TOOLS_DIR/aapt2"
+          "$AAPT" dump badging "$APK_PATH" | head -n 25
+          "$AAPT" dump badging "$APK_PATH" | grep -q "package: name='com.alexey.notesclient'"
+          "$AAPT" dump badging "$APK_PATH" | grep -q "launchable-activity:"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
