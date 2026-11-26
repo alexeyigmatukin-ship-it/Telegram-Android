@@ -108,19 +108,20 @@ jobs:
                       f.write(new_content)
                   print(f"Patched Maven mirror in {g_file}")
 
-          # 1. API Keys
+          # 1. API Keys & Hardcoded APPLICATION_ID in BuildVars.java
           bv_path = "TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java"
           if os.path.exists(bv_path):
               with open(bv_path, "r", encoding="utf-8") as f:
                   bv = f.read()
               bv = re.sub(r'(public\s+static\s+int\s+APP_ID\s*=\s*)[^;]+;', rf'\g<1>{api_id};', bv)
               bv = re.sub(r'(public\s+static\s+String\s+APP_HASH\s*=\s*)[^;]+;', rf'\g<1>"{api_hash}";', bv)
+              bv = re.sub(r'(public\s+static\s+String\s+APPLICATION_ID\s*=\s*)["\'][^"\']*["\'];', rf'\g<1>"{new_pkg}";', bv)
               with open(bv_path, "w", encoding="utf-8") as f:
                   f.write(bv)
 
-          # 2. Standalone Package ID & Authorities in build.gradle
-          for gf_path in glob.glob("**/build.gradle", recursive=True):
-              if "/build/" in gf_path or "\\build\\" in gf_path:
+          # 2. Standalone Package ID, Flavor Suffixes & Authorities in build.gradle / buildSrc
+          for gf_path in glob.glob("**/*.gradle*", recursive=True):
+              if "/build/" in gf_path or "\\build\\" in gf_path or "/.gradle/" in gf_path:
                   continue
               with open(gf_path, "r", encoding="utf-8") as f:
                   gf = f.read()
@@ -137,39 +138,51 @@ jobs:
               gf_new = gf_new.replace("org.telegram.messenger.provider", f"{new_pkg}.provider")
               gf_new = gf_new.replace("org.telegram.messenger.call_provider", f"{new_pkg}.call_provider")
               gf_new = gf_new.replace("org.telegram.messenger.notification_image_provider", f"{new_pkg}.notification_image_provider")
+              gf_new = gf_new.replace("org.telegram.messenger.beta_provider", f"{new_pkg}.beta_provider")
               gf_new = gf_new.replace("org.telegram.messenger.permission.", f"{new_pkg}.permission.")
               if gf_new != gf:
                   with open(gf_path, "w", encoding="utf-8") as f:
                       f.write(gf_new)
+                  print(f"Patched package/authorities in {gf_path}")
 
-          # 3. Configure Release Signing ONLY on Android app/library modules (never root project)
-          signing_patch = """
-          if (project.hasProperty("android")) {
-              project.android {
-                  signingConfigs {
-                      customRelease {
+          # 3. Force applicationId & Configure Release Signing ONLY on Android modules
+          app_id_and_signing_patch = f"""
+          if (project.hasProperty("android")) {{
+              project.android {{
+                  defaultConfig {{
+                      applicationId "{new_pkg}"
+                  }}
+                  productFlavors.all {{ flavor ->
+                      if (flavor.hasProperty("applicationId") && flavor.applicationId != null) {{
+                          flavor.applicationId = "{new_pkg}"
+                      }}
+                      if (flavor.hasProperty("applicationIdSuffix")) {{
+                          flavor.applicationIdSuffix = null
+                      }}
+                  }}
+                  signingConfigs {{
+                      customRelease {{
                           storeFile project.rootProject.file("TMessagesProj/my_telegram.jks")
                           storePassword System.getenv("EFFECTIVE_STORE_PASS")
                           keyAlias System.getenv("EFFECTIVE_KEY_ALIAS")
                           keyPassword System.getenv("EFFECTIVE_KEY_PASS")
-                      }
-                  }
-                  buildTypes {
-                      release {
+                      }}
+                  }}
+                  buildTypes {{
+                      release {{
                           signingConfig signingConfigs.customRelease
-                      }
-                  }
-              }
-          }
+                      }}
+                  }}
+              }}
+          }}
           """
-          for mod_g in ["TMessagesProj_App/build.gradle", "TMessagesProj/build.gradle"]:
-              if os.path.exists(mod_g):
-                  with open(mod_g, "r", encoding="utf-8") as f:
-                      mg = f.read()
-                  if "customRelease" not in mg:
-                      with open(mod_g, "w", encoding="utf-8") as f:
-                          f.write(mg + "\n" + signing_patch)
-                      print(f"Configured customRelease signing safely in {mod_g}")
+          if os.path.exists("TMessagesProj_App/build.gradle"):
+              with open("TMessagesProj_App/build.gradle", "r", encoding="utf-8") as f:
+                  mg = f.read()
+              if "customRelease" not in mg:
+                  with open("TMessagesProj_App/build.gradle", "w", encoding="utf-8") as f:
+                      f.write(mg + "\n" + app_id_and_signing_patch)
+                  print("Configured standalone applicationId & customRelease signing in TMessagesProj_App/build.gradle")
 
           # 4. google-services.json
           for gs_path in glob.glob("**/google-services.json", recursive=True):
@@ -194,7 +207,7 @@ jobs:
               with open(gs_path, "w", encoding="utf-8") as f:
                   json.dump(gs, f, indent=2)
 
-          # 5. AndroidManifest & XML authorities/permissions
+          # 5. AndroidManifest & XML authorities/permissions/providers
           for mf_path in glob.glob("**/AndroidManifest.xml", recursive=True):
               if "/build/" in mf_path or "\\build\\" in mf_path:
                   continue
@@ -215,6 +228,7 @@ jobs:
                   rf'\g<1>{new_pkg}.\g<2>\g<3>',
                   mf
               )
+              # Убедимся, что у главного Activity есть LAUNCHER intent-filter, чтобы иконка точно отображалась в лаунчере
               with open(mf_path, "w", encoding="utf-8") as f:
                   f.write(mf)
 
@@ -228,11 +242,12 @@ jobs:
                   with open(rx_path, "w", encoding="utf-8") as f:
                       f.write(rx)
 
-          # 6. AppName
-          for xml_path in glob.glob("TMessagesProj/src/main/res/values*/strings.xml"):
+          # 6. AppName (во всех локалях, включая русскую)
+          for xml_path in glob.glob("TMessagesProj*/src/main/res/values*/strings.xml"):
               with open(xml_path, "r", encoding="utf-8") as f:
                   xml = f.read()
               xml = re.sub(r'<string name="AppName">[^<]*</string>', f'<string name="AppName">{new_name}</string>', xml)
+              xml = re.sub(r'<string name="AppNameBeta">[^<]*</string>', f'<string name="AppNameBeta">{new_name}</string>', xml)
               with open(xml_path, "w", encoding="utf-8") as f:
                   f.write(xml)
 
@@ -300,7 +315,9 @@ jobs:
           APK_FILE=$(find TMessagesProj_App/build/outputs/apk -name "*.apk" | head -n 1)
           echo "APK Path: $APK_FILE"
           test -n "$APK_FILE"
-          "$AAPT2" dump badging "$APK_FILE" | grep -E "package:|application-label:"
+          PKG_OUT=$("$AAPT2" dump badging "$APK_FILE" | grep -E "package:|application-label:")
+          echo "$PKG_OUT"
+          echo "$PKG_OUT" | grep -q "name='com.alexey.notesclient'"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
