@@ -229,8 +229,9 @@ jobs:
         run: |
           chmod +x gradlew
           SIGN_ARGS=""
-          if [ -f "TMessagesProj/my_telegram.jks" ] && [ -n "$STORE_PASS" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASS" ]; then
-            SIGN_ARGS="-Pandroid.injected.signing.store.file=my_telegram.jks -Pandroid.injected.signing.store.password=$STORE_PASS -Pandroid.injected.signing.key.alias=$KEY_ALIAS -Pandroid.injected.signing.key.password=$KEY_PASS"
+          KS_PATH="$(pwd)/TMessagesProj/my_telegram.jks"
+          if [ -f "$KS_PATH" ] && [ -n "$STORE_PASS" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASS" ]; then
+            SIGN_ARGS="-Pandroid.injected.signing.store.file=$KS_PATH -Pandroid.injected.signing.store.password=$STORE_PASS -Pandroid.injected.signing.key.alias=$KEY_ALIAS -Pandroid.injected.signing.key.password=$KEY_PASS"
           fi
           ./gradlew :TMessagesProj_App:assembleAfatRelease --max-workers=2 $SIGN_ARGS
 
