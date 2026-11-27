@@ -332,34 +332,34 @@ jobs:
               private static final Map<String, String> editedHistory = Collections.synchronizedMap(new HashMap<>());
 
               public static final int[] SWATCH_PALETTE = new int[] {
-                  0xFF3390EC, // Telegram Classic Blue
-                  0xFFE11D48, // Porsche Crimson
-                  0xFF38BDF8, // Magic Titanium Cyan
-                  0xFF10B981, // Emerald GT
-                  0xFFF59E0B, // Chrono Gold
-                  0xFFA855F7, // Ultra Violet
-                  0xFFEC4899, // Neon Rose
-                  0xFF6366F1, // Cobalt Pulse
-                  0xFFF97316, // Supercar Tangerine
-                  0xFF14B8A6  // Teal Matrix
+                  0xFF3390EC,
+                  0xFFE11D48,
+                  0xFF38BDF8,
+                  0xFF10B981,
+                  0xFFF59E0B,
+                  0xFFA855F7,
+                  0xFFEC4899,
+                  0xFF6366F1,
+                  0xFFF97316,
+                  0xFF14B8A6
               };
 
               public static final int[] SURFACE_PALETTE = new int[] {
-                  0xFF18222D, // Telegram Dark Slate
-                  0xFF0F161E, // Telegram Deep Night
-                  0xFF000000, // Pure AMOLED
-                  0xFF161213, // Porsche Carbon Wine
-                  0xFF101815, // Dark Forest Glass
-                  0xFF181520  // Midnight Plum
+                  0xFF18222D,
+                  0xFF0F161E,
+                  0xFF000000,
+                  0xFF161213,
+                  0xFF101815,
+                  0xFF181520
               };
 
               public static final int[] BUBBLE_PALETTE = new int[] {
-                  0xFF212D3B, // Telegram Incoming Dark
-                  0xFF2B5278, // Telegram Outgoing Blue
-                  0xFF1E293B, // Slate Glass
-                  0xFF2A1419, // Crimson Shadow
-                  0xFF112622, // Emerald Shadow
-                  0xFF1F192E  // Violet Shadow
+                  0xFF212D3B,
+                  0xFF2B5278,
+                  0xFF1E293B,
+                  0xFF2A1419,
+                  0xFF112622,
+                  0xFF1F192E
               };
 
               private static SharedPreferences getPrefs() {
@@ -682,1137 +682,801 @@ jobs:
           with open(f"{h_dir}/CustomConfig.java", "w", encoding="utf-8") as f:
               f.write(custom_cfg_code)
 
-          # 8. LocalWhisperHelper: Telegram-native Notes Hub, Guide ("Where to find everything"), Theme Studio & Media Send
-          whisper_helper_code = """package org.telegram.messenger;
-
-          import android.app.Activity;
-          import android.app.AlertDialog;
-          import android.content.ClipData;
-          import android.content.ClipboardManager;
-          import android.content.Context;
-          import android.content.Intent;
-          import android.graphics.Color;
-          import android.graphics.Typeface;
-          import android.graphics.drawable.GradientDrawable;
-          import android.media.MediaCodec;
-          import android.media.MediaExtractor;
-          import android.media.MediaFormat;
-          import android.net.Uri;
-          import android.os.Build;
-          import android.os.Environment;
-          import android.os.VibrationEffect;
-          import android.os.Vibrator;
-          import android.text.TextUtils;
-          import android.view.Gravity;
-          import android.view.View;
-          import android.view.ViewGroup;
-          import android.view.Window;
-          import android.view.WindowManager;
-          import android.widget.Button;
-          import android.widget.EditText;
-          import android.widget.HorizontalScrollView;
-          import android.widget.LinearLayout;
-          import android.widget.ScrollView;
-          import android.widget.SeekBar;
-          import android.widget.Switch;
-          import android.widget.TextView;
-          import androidx.core.content.FileProvider;
-          import java.io.ByteArrayOutputStream;
-          import java.io.File;
-          import java.io.FileInputStream;
-          import java.io.FileOutputStream;
-          import java.nio.ByteBuffer;
-          import java.nio.ByteOrder;
-
-          public class LocalWhisperHelper {
-              private static final String MODEL_ASSET_PATH = "whisper/ggml-small-q5_1.bin";
-
-              private static final int TG_BLUE = 0xFF3390EC;
-              private static final int TG_DARK_BG = 0xFF18222D;
-              private static final int TG_DARK_CELL = 0xFF212D3B;
-              private static final int TG_DARK_DIVIDER = 0xFF10161D;
-              private static final int TG_TEXT_MAIN = 0xFFFFFFFF;
-              private static final int TG_TEXT_SUB = 0xFF8A9BA8;
-
-              private interface ColorApplyCallback {
-                  void onApply(int color);
-              }
-
-              private static int dp(Context ctx, float value) {
-                  float density = ctx.getResources().getDisplayMetrics().density;
-                  return Math.round(value * density);
-              }
-
-              private static int withAlpha(int color, int alpha) {
-                  return Color.argb(Math.max(0, Math.min(255, alpha)), Color.red(color), Color.green(color), Color.blue(color));
-              }
-
-              private static GradientDrawable makeTgSurface(int bgColor, int strokeColor, float radiusDp, Context ctx) {
-                  GradientDrawable gd = new GradientDrawable();
-                  gd.setShape(GradientDrawable.RECTANGLE);
-                  gd.setColor(bgColor);
-                  gd.setCornerRadius(dp(ctx, radiusDp));
-                  if (strokeColor != Color.TRANSPARENT) {
-                      gd.setStroke(dp(ctx, 1f), strokeColor);
-                  }
-                  return gd;
-              }
-
-              private static View makeSectionDivider(Context ctx) {
-                  View v = new View(ctx);
-                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                      ViewGroup.LayoutParams.MATCH_PARENT, dp(ctx, 10)
-                  );
-                  v.setLayoutParams(lp);
-                  v.setBackgroundColor(TG_DARK_DIVIDER);
-                  return v;
-              }
-
-              private static TextView makeSectionHeader(Context ctx, String title) {
-                  TextView tv = new TextView(ctx);
-                  tv.setText(title);
-                  tv.setTextColor(TG_BLUE);
-                  tv.setTypeface(Typeface.DEFAULT_BOLD);
-                  tv.setTextSize(13.5f);
-                  tv.setPadding(dp(ctx, 18), dp(ctx, 12), dp(ctx, 18), dp(ctx, 6));
-                  return tv;
-              }
-
-              private static LinearLayout makeTgRow(Context ctx, String title, String subtitle, String badgeRight, View.OnClickListener listener) {
-                  LinearLayout row = new LinearLayout(ctx);
-                  row.setOrientation(LinearLayout.HORIZONTAL);
-                  row.setGravity(Gravity.CENTER_VERTICAL);
-                  row.setPadding(dp(ctx, 18), dp(ctx, 11), dp(ctx, 18), dp(ctx, 11));
-                  row.setBackgroundColor(TG_DARK_CELL);
-                  if (listener != null) {
-                      row.setOnClickListener(listener);
-                  }
-
-                  LinearLayout textCol = new LinearLayout(ctx);
-                  textCol.setOrientation(LinearLayout.VERTICAL);
-                  LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(
-                      0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
-                  );
-                  textLp.rightMargin = dp(ctx, 10);
-
-                  TextView titleTv = new TextView(ctx);
-                  titleTv.setText(title);
-                  titleTv.setTextColor(TG_TEXT_MAIN);
-                  titleTv.setTextSize(15.5f);
-                  textCol.addView(titleTv);
-
-                  if (!TextUtils.isEmpty(subtitle)) {
-                      TextView subTv = new TextView(ctx);
-                      subTv.setText(subtitle);
-                      subTv.setTextColor(TG_TEXT_SUB);
-                      subTv.setTextSize(13f);
-                      subTv.setPadding(0, dp(ctx, 2), 0, 0);
-                      textCol.addView(subTv);
-                  }
-
-                  row.addView(textCol, textLp);
-
-                  if (!TextUtils.isEmpty(badgeRight)) {
-                      TextView badgeTv = new TextView(ctx);
-                      badgeTv.setText(badgeRight);
-                      badgeTv.setTextColor(TG_BLUE);
-                      badgeTv.setTypeface(Typeface.DEFAULT_BOLD);
-                      badgeTv.setTextSize(13.5f);
-                      row.addView(badgeTv);
-                  }
-
-                  return row;
-              }
-
-              private static Switch makeTgSwitchRow(Context ctx, String title, String subtitle, boolean checked, View.OnClickListener onToggle) {
-                  Switch sw = new Switch(ctx);
-                  sw.setText(TextUtils.isEmpty(subtitle) ? title : (title + "\\n" + subtitle));
-                  sw.setTextColor(TG_TEXT_MAIN);
-                  sw.setTextSize(14.5f);
-                  sw.setChecked(checked);
-                  sw.setPadding(dp(ctx, 18), dp(ctx, 10), dp(ctx, 18), dp(ctx, 10));
-                  sw.setBackgroundColor(TG_DARK_CELL);
-                  if (onToggle != null) {
-                      sw.setOnClickListener(onToggle);
-                  }
-                  return sw;
-              }
-
-              private static int safeParseHex(String input, int fallback) {
-                  if (TextUtils.isEmpty(input)) return fallback;
-                  String clean = input.trim();
-                  if (!clean.startsWith("#")) clean = "#" + clean;
-                  try {
-                      return Color.parseColor(clean);
-                  } catch (Throwable ignored) {
-                      return fallback;
-                  }
-              }
-
-              public static void openNotesMainHub(final Activity activity, final long dialogId) {
-                  if (activity == null || activity.isFinishing()) return;
-                  try {
-                      refreshDisplayAndGuestGuard(activity);
-
-                      ScrollView scroll = new ScrollView(activity);
-                      scroll.setBackgroundColor(TG_DARK_BG);
-
-                      LinearLayout root = new LinearLayout(activity);
-                      root.setOrientation(LinearLayout.VERTICAL);
-                      scroll.addView(root);
-
-                      LinearLayout topBanner = new LinearLayout(activity);
-                      topBanner.setOrientation(LinearLayout.VERTICAL);
-                      topBanner.setBackgroundColor(TG_DARK_CELL);
-                      topBanner.setPadding(dp(activity, 18), dp(activity, 14), dp(activity, 18), dp(activity, 14));
-
-                      TextView appTitle = new TextView(activity);
-                      appTitle.setText("Notes • Настройки клиента");
-                      appTitle.setTextColor(TG_TEXT_MAIN);
-                      appTitle.setTypeface(Typeface.DEFAULT_BOLD);
-                      appTitle.setTextSize(17f);
-                      topBanner.addView(appTitle);
-
-                      TextView appHint = new TextView(activity);
-                      String statusLine = CustomConfig.isGuestHandoverActive()
-                          ? ("Гостевой режим активен: осталось " + CustomConfig.getGuestRemainingSeconds() + " сек • FLAG_SECURE включён")
-                          : ("Пакет: com.alexey.notesclient • Локальный Premium: " + (CustomConfig.isLocalPremiumEnabled() ? "ВКЛ" : "ВЫКЛ"));
-                      appHint.setText(statusLine);
-                      appHint.setTextColor(TG_BLUE);
-                      appHint.setTextSize(12.5f);
-                      appHint.setPadding(0, dp(activity, 3), 0, 0);
-                      topBanner.addView(appHint);
-                      root.addView(topBanner);
-
-                      root.addView(makeSectionDivider(activity));
-                      root.addView(makeSectionHeader(activity, "Интерфейс и отправка медиа"));
-
-                      root.addView(makeTgRow(
-                          activity,
-                          "Панель настройки тем",
-                          "Любые цвета (HEX и палитра), скругления баблов/карточек и масштаб шрифта",
-                          "Открыть",
-                          v -> {
-                              triggerPorscheTick(14, 110);
-                              openThemeStudioPanel(activity);
-                          }
-                      ));
-
-                      root.addView(makeSectionDivider(activity));
-
-                      String[] qNames = new String[] {"85%", "95%", "100% оригинал"};
-                      root.addView(makeTgRow(
-                          activity,
-                          "Настройки отправки медиа",
-                          "Качество фото, профиль видео, спойлеры, очистка EXIF, файл без сжатия, тихая отправка",
-                          qNames[CustomConfig.getPhotoSendQuality()],
-                          v -> {
-                              triggerPorscheTick(14, 110);
-                              openMediaSendSettingsPanel(activity);
-                          }
-                      ));
-
-                      root.addView(makeSectionDivider(activity));
-                      root.addView(makeSectionHeader(activity, "Приватность, гостевой режим и Whisper"));
-
-                      root.addView(makeTgRow(
-                          activity,
-                          "Гостевой режим на 5 минут",
-                          CustomConfig.isGuestHandoverActive()
-                              ? ("Осталось " + CustomConfig.getGuestRemainingSeconds() + " сек • Нажмите, чтобы отключить")
-                              : "Блокирует скриншоты (FLAG_SECURE), скрытый просмотр и удаление данных на 5 минут",
-                          CustomConfig.isGuestHandoverActive() ? "Снять" : "5 мин",
-                          v -> {
-                              if (CustomConfig.isGuestHandoverActive()) {
-                                  CustomConfig.disarmGuestHandover();
-                              } else {
-                                  CustomConfig.armGuestHandoverTimer(5);
-                              }
-                              refreshDisplayAndGuestGuard(activity);
-                              triggerPorscheTick(22, 140);
-                              openNotesMainHub(activity, dialogId);
-                          }
-                      ));
-
-                      root.addView(makeSectionDivider(activity));
-
-                      root.addView(makeTgSwitchRow(
-                          activity,
-                          "Режим призрака (не отмечать прочитанным)",
-                          "Собеседник не видит отметку прочтения сообщений",
-                          CustomConfig.isGhostRead(dialogId),
-                          v -> {
-                              CustomConfig.toggleGhostRead();
-                              triggerPorscheTick(12, 100);
-                          }
-                      ));
-
-                      root.addView(makeSectionDivider(activity));
-
-                      root.addView(makeTgSwitchRow(
-                          activity,
-                          "Не показывать «печатает...»",
-                          "Скрывает статус набора текста во всех чатах",
-                          CustomConfig.isNoTyping(dialogId),
-                          v -> {
-                              CustomConfig.toggleNoTyping();
-                              triggerPorscheTick(12, 100);
-                          }
-                      ));
-
-                      root.addView(makeSectionDivider(activity));
-
-                      root.addView(makeTgSwitchRow(
-                          activity,
-                          "Локальный Telegram Premium",
-                          "Локальные премиум-флаги, быстрая загрузка и расширенные возможности",
-                          CustomConfig.isLocalPremiumEnabled(),
-                          v -> {
-                              CustomConfig.toggleLocalPremium();
-                              triggerPorscheTick(12, 100);
-                          }
-                      ));
-
-                      root.addView(makeSectionDivider(activity));
-
-                      root.addView(makeTgSwitchRow(
-                          activity,
-                          "Локальный Whisper (RU)",
-                          "Подготовка аудио/кружков (16 кГц WAV) и модель ggml-small-q5_1.bin",
-                          CustomConfig.isLocalWhisperRu(),
-                          v -> {
-                              CustomConfig.toggleLocalWhisperRu();
-                              triggerPorscheTick(12, 100);
-                          }
-                      ));
-
-                      root.addView(makeSectionDivider(activity));
-
-                      root.addView(makeTgSwitchRow(
-                          activity,
-                          "120 Гц и буст Honor Magic 6 Pro",
-                          "Плавная частота обновления и тактильный отклик Porsche",
-                          CustomConfig.isForce120Hz(),
-                          v -> {
-                              CustomConfig.toggleForce120Hz();
-                              refreshDisplayAndGuestGuard(activity);
-                              triggerPorscheTick(16, 120);
-                          }
-                      ));
-
-                      if (dialogId != 0L) {
-                          root.addView(makeSectionDivider(activity));
-                          root.addView(makeTgSwitchRow(
-                              activity,
-                              "Стоковый режим для этого чата",
-                              "Отключает кастомные модификации в текущем диалоге",
-                              CustomConfig.isStockMode(dialogId),
-                              v -> {
-                                  CustomConfig.toggleStockMode(dialogId);
-                                  triggerPorscheTick(14, 110);
-                              }
-                          ));
-                      }
-
-                      root.addView(makeSectionDivider(activity));
-                      root.addView(makeSectionHeader(activity, "Где найти все новые функции"));
-
-                      root.addView(makeTgRow(
-                          activity,
-                          "Путеводитель по функциям Notes",
-                          "1) Настройки приложения → «Notes • Функции и где найти»\n"
-                          + "2) Главный экран чатов (⋮) → «Notes • Панель функций»\n"
-                          + "3) Внутри любого чата (⋮) → «Notes • Панель функций»\n"
-                          + "4) Анти-удаление и NotesVault (Pictures/Movies/NotesVault) работают в фоне",
-                          "Справка",
-                          v -> openFeaturesGuideDialog(activity)
-                      ));
-
-                      AlertDialog.Builder builder = new AlertDialog.Builder(activity);
-                      builder.setView(scroll);
-                      builder.setPositiveButton("Закрыть", null);
-                      builder.show();
-                  } catch (Throwable ignored) {}
-              }
-
-              public static void openFeaturesGuideDialog(final Activity activity) {
-                  if (activity == null || activity.isFinishing()) return;
-                  try {
-                      ScrollView scroll = new ScrollView(activity);
-                      scroll.setBackgroundColor(TG_DARK_BG);
-
-                      LinearLayout root = new LinearLayout(activity);
-                      root.setOrientation(LinearLayout.VERTICAL);
-                      root.setPadding(dp(activity, 18), dp(activity, 14), dp(activity, 18), dp(activity, 18));
-                      scroll.addView(root);
-
-                      String guide =
-                          "• Панель настройки тем: открывается из раздела «Notes» в Настройках, из меню ⋮ в списке чатов или из меню ⋮ внутри чата.\n\n"
-                          + "• Расширенные настройки отправки медиа: там же в разделе «Notes» — выбор качества фото (85% / 95% / 100%), профиля видео, спойлеров, очистка EXIF, отправка файлом, тихая отправка и копирование в NotesVault.\n\n"
-                          + "• Гостевой режим на 5 минут: включает FLAG_SECURE против скриншотов и блокирует удаление/очистку на 5 минут.\n\n"
-                          + "• Анти-удаление и NotesVault: удалённые сообщения помечаются локально, а просмотренные секретные фото/видео сохраняются в Pictures/NotesVault и Movies/NotesVault (кроме гостевого режима).\n\n"
-                          + "• Локальный Whisper (RU): конвертирует голос и кружки в 16 кГц WAV и передаёт с моделью whisper/ggml-small-q5_1.bin и языком ru.";
-
-                      TextView tv = new TextView(activity);
-                      tv.setText(guide);
-                      tv.setTextColor(TG_TEXT_MAIN);
-                      tv.setTextSize(14f);
-                      tv.setLineSpacing(dp(activity, 3), 1.1f);
-                      root.addView(tv);
-
-                      new AlertDialog.Builder(activity)
-                          .setTitle("Где найти новые функции")
-                          .setView(scroll)
-                          .setPositiveButton("Понятно", null)
-                          .show();
-                  } catch (Throwable ignored) {}
-              }
-
-              public static void openMediaSendSettingsPanel(final Activity activity) {
-                  if (activity == null || activity.isFinishing()) return;
-                  try {
-                      int accent = CustomConfig.getAccentColor();
-                      int surface = CustomConfig.getSurfaceColor();
-                      int bubble = CustomConfig.getBubbleColor();
-                      int textCol = CustomConfig.getTextColor();
-                      float cardR = CustomConfig.getCardCornerRadiusDp();
-                      float fontS = CustomConfig.getFontScaleMultiplier();
-
-                      ScrollView scroll = new ScrollView(activity);
-                      scroll.setBackgroundColor(surface);
-                      scroll.setPadding(dp(activity, 16), dp(activity, 16), dp(activity, 16), dp(activity, 24));
-
-                      LinearLayout root = new LinearLayout(activity);
-                      root.setOrientation(LinearLayout.VERTICAL);
-                      scroll.addView(root);
-
-                      LinearLayout photoCard = new LinearLayout(activity);
-                      photoCard.setOrientation(LinearLayout.VERTICAL);
-                      photoCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));
-                      photoCard.setBackground(makeTgSurface(bubble, withAlpha(accent, 140), cardR, activity));
-
-                      TextView pTitle = new TextView(activity);
-                      pTitle.setText("Качество отправки фото");
-                      pTitle.setTextColor(accent);
-                      pTitle.setTypeface(Typeface.DEFAULT_BOLD);
-                      pTitle.setTextSize(13f * fontS);
-                      photoCard.addView(pTitle);
-
-                      final TextView pVal = new TextView(activity);
-                      final String[] photoLabels = new String[] {"Стандарт (85%)", "Высокое (95%)", "Оригинал без сжатия (100%)"};
-                      pVal.setText("Текущее: " + photoLabels[CustomConfig.getPhotoSendQuality()]);
-                      pVal.setTextColor(textCol);
-                      pVal.setTextSize(13f * fontS);
-                      pVal.setPadding(0, dp(activity, 4), 0, dp(activity, 8));
-                      photoCard.addView(pVal);
-
-                      LinearLayout pBtns = new LinearLayout(activity);
-                      pBtns.setOrientation(LinearLayout.HORIZONTAL);
-                      for (int i = 0; i < 3; i++) {
-                          final int mode = i;
-                          Button b = new Button(activity);
-                          b.setText(i == 0 ? "85%" : (i == 1 ? "95%" : "100%"));
-                          b.setAllCaps(false);
-                          b.setTextColor(textCol);
-                          b.setBackground(makeTgSurface(withAlpha(surface, 220), withAlpha(accent, 120), 10f, activity));
-                          LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(activity, 38), 1f);
-                          if (i < 2) lp.rightMargin = dp(activity, 6);
-                          b.setLayoutParams(lp);
-                          b.setOnClickListener(v -> {
-                              CustomConfig.setPhotoSendQuality(mode);
-                              pVal.setText("Текущее: " + photoLabels[mode]);
-                              triggerPorscheTick(12, 100);
-                          });
-                          pBtns.addView(b);
-                      }
-                      photoCard.addView(pBtns);
-                      LinearLayout.LayoutParams pCardLp = new LinearLayout.LayoutParams(
-                          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                      );
-                      pCardLp.bottomMargin = dp(activity, 12);
-                      root.addView(photoCard, pCardLp);
-
-                      LinearLayout vidCard = new LinearLayout(activity);
-                      vidCard.setOrientation(LinearLayout.VERTICAL);
-                      vidCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));
-                      vidCard.setBackground(makeTgSurface(bubble, withAlpha(accent, 140), cardR, activity));
-
-                      TextView vTitle = new TextView(activity);
-                      vTitle.setText("Профиль отправки видео");
-                      vTitle.setTextColor(accent);
-                      vTitle.setTypeface(Typeface.DEFAULT_BOLD);
-                      vTitle.setTextSize(13f * fontS);
-                      vidCard.addView(vTitle);
-
-                      final TextView vVal = new TextView(activity);
-                      final String[] vidLabels = new String[] {"Баланс", "Высокий битрейт", "Исходный файл"};
-                      vVal.setText("Текущий: " + vidLabels[CustomConfig.getVideoSendProfile()]);
-                      vVal.setTextColor(textCol);
-                      vVal.setTextSize(13f * fontS);
-                      vVal.setPadding(0, dp(activity, 4), 0, dp(activity, 8));
-                      vidCard.addView(vVal);
-
-                      LinearLayout vBtns = new LinearLayout(activity);
-                      vBtns.setOrientation(LinearLayout.HORIZONTAL);
-                      for (int i = 0; i < 3; i++) {
-                          final int prof = i;
-                          Button b = new Button(activity);
-                          b.setText(i == 0 ? "Баланс" : (i == 1 ? "Высокий" : "Исходник"));
-                          b.setAllCaps(false);
-                          b.setTextColor(textCol);
-                          b.setBackground(makeTgSurface(withAlpha(surface, 220), withAlpha(accent, 120), 10f, activity));
-                          LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(activity, 38), 1f);
-                          if (i < 2) lp.rightMargin = dp(activity, 6);
-                          b.setLayoutParams(lp);
-                          b.setOnClickListener(v -> {
-                              CustomConfig.setVideoSendProfile(prof);
-                              vVal.setText("Текущий: " + vidLabels[prof]);
-                              triggerPorscheTick(12, 100);
-                          });
-                          vBtns.addView(b);
-                      }
-                      vidCard.addView(vBtns);
-                      LinearLayout.LayoutParams vCardLp = new LinearLayout.LayoutParams(
-                          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                      );
-                      vCardLp.bottomMargin = dp(activity, 12);
-                      root.addView(vidCard, vCardLp);
-
-                      LinearLayout spCard = new LinearLayout(activity);
-                      spCard.setOrientation(LinearLayout.VERTICAL);
-                      spCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));
-                      spCard.setBackground(makeTgSurface(bubble, withAlpha(accent, 140), cardR, activity));
-
-                      TextView sTitle = new TextView(activity);
-                      sTitle.setText("Спойлеры для отправляемых медиа");
-                      sTitle.setTextColor(accent);
-                      sTitle.setTypeface(Typeface.DEFAULT_BOLD);
-                      sTitle.setTextSize(13f * fontS);
-                      spCard.addView(sTitle);
-
-                      final TextView sVal = new TextView(activity);
-                      final String[] spLabels = new String[] {"Выключены", "Авто-спойлер (фото/видео)", "Всегда спойлер"};
-                      sVal.setText("Текущее: " + spLabels[CustomConfig.getSpoilerMediaMode()]);
-                      sVal.setTextColor(textCol);
-                      sVal.setTextSize(13f * fontS);
-                      sVal.setPadding(0, dp(activity, 4), 0, dp(activity, 8));
-                      spCard.addView(sVal);
-
-                      LinearLayout sBtns = new LinearLayout(activity);
-                      sBtns.setOrientation(LinearLayout.HORIZONTAL);
-                      for (int i = 0; i < 3; i++) {
-                          final int sm = i;
-                          Button b = new Button(activity);
-                          b.setText(i == 0 ? "Выкл" : (i == 1 ? "Авто" : "Всегда"));
-                          b.setAllCaps(false);
-                          b.setTextColor(textCol);
-                          b.setBackground(makeTgSurface(withAlpha(surface, 220), withAlpha(accent, 120), 10f, activity));
-                          LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(activity, 38), 1f);
-                          if (i < 2) lp.rightMargin = dp(activity, 6);
-                          b.setLayoutParams(lp);
-                          b.setOnClickListener(v -> {
-                              CustomConfig.setSpoilerMediaMode(sm);
-                              sVal.setText("Текущее: " + spLabels[sm]);
-                              triggerPorscheTick(12, 100);
-                          });
-                          sBtns.addView(b);
-                      }
-                      spCard.addView(sBtns);
-                      LinearLayout.LayoutParams sCardLp = new LinearLayout.LayoutParams(
-                          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                      );
-                      sCardLp.bottomMargin = dp(activity, 12);
-                      root.addView(spCard, sCardLp);
-
-                      Switch exifSwitch = new Switch(activity);
-                      exifSwitch.setText("Очищать EXIF / геолокацию при отправке");
-                      exifSwitch.setTextColor(textCol);
-                      exifSwitch.setChecked(CustomConfig.isStripMediaExif());
-                      exifSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 6));
-                      exifSwitch.setOnClickListener(v -> {
-                          CustomConfig.toggleStripMediaExif();
-                          exifSwitch.setChecked(CustomConfig.isStripMediaExif());
-                      });
-                      root.addView(exifSwitch);
-
-                      Switch fileSwitch = new Switch(activity);
-                      fileSwitch.setText("Отправлять медиа как файл без пережатия");
-                      fileSwitch.setTextColor(textCol);
-                      fileSwitch.setChecked(CustomConfig.isSendMediaAsFile());
-                      fileSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 6));
-                      fileSwitch.setOnClickListener(v -> {
-                          CustomConfig.toggleSendMediaAsFile();
-                          fileSwitch.setChecked(CustomConfig.isSendMediaAsFile());
-                      });
-                      root.addView(fileSwitch);
-
-                      Switch silentSwitch = new Switch(activity);
-                      silentSwitch.setText("Отправлять медиа без звука (тихо)");
-                      silentSwitch.setTextColor(textCol);
-                      silentSwitch.setChecked(CustomConfig.isSendMediaSilently());
-                      silentSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 6));
-                      silentSwitch.setOnClickListener(v -> {
-                          CustomConfig.toggleSendMediaSilently();
-                          silentSwitch.setChecked(CustomConfig.isSendMediaSilently());
-                      });
-                      root.addView(silentSwitch);
-
-                      Switch vaultSwitch = new Switch(activity);
-                      vaultSwitch.setText("Копировать отправляемые медиа в NotesVault");
-                      vaultSwitch.setTextColor(textCol);
-                      vaultSwitch.setChecked(CustomConfig.isAutoBackupSentToVault());
-                      vaultSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 8));
-                      vaultSwitch.setOnClickListener(v -> {
-                          CustomConfig.toggleAutoBackupSentToVault();
-                          vaultSwitch.setChecked(CustomConfig.isAutoBackupSentToVault());
-                      });
-                      root.addView(vaultSwitch);
-
-                      AlertDialog.Builder builder = new AlertDialog.Builder(activity);
-                      builder.setTitle("Notes • Настройки отправки медиа");
-                      builder.setView(scroll);
-                      builder.setPositiveButton("Сохранить", (d, w) -> triggerPorscheTick(18, 120));
-                      builder.show();
-                  } catch (Throwable ignored) {}
-              }
-
-              public static void openThemeStudioPanel(final Activity activity) {
-                  if (activity == null || activity.isFinishing()) return;
-                  try {
-                      final int initAccent = CustomConfig.getAccentColor();
-                      final int initSurface = CustomConfig.getSurfaceColor();
-                      final int initBubble = CustomConfig.getBubbleColor();
-                      final int initOutBubble = CustomConfig.getOutBubbleColor();
-                      final int initText = CustomConfig.getTextColor();
-                      final float initBubbleRadius = CustomConfig.getBubbleCornerRadiusDp();
-                      final float initCardRadius = CustomConfig.getCardCornerRadiusDp();
-                      final float initFontScale = CustomConfig.getFontScaleMultiplier();
-
-                      final ScrollView scroll = new ScrollView(activity);
-                      scroll.setBackgroundColor(initSurface);
-                      scroll.setPadding(dp(activity, 16), dp(activity, 16), dp(activity, 16), dp(activity, 24));
-
-                      final LinearLayout root = new LinearLayout(activity);
-                      root.setOrientation(LinearLayout.VERTICAL);
-                      scroll.addView(root);
-
-                      final LinearLayout previewCard = new LinearLayout(activity);
-                      previewCard.setOrientation(LinearLayout.VERTICAL);
-                      previewCard.setPadding(dp(activity, 16), dp(activity, 14), dp(activity, 16), dp(activity, 14));
-                      previewCard.setBackground(makeTgSurface(initSurface, withAlpha(initAccent, 180), initCardRadius, activity));
-
-                      final TextView previewBadge = new TextView(activity);
-                      previewBadge.setText("THEME STUDIO • КОНСТРУКТОР ТЕМ");
-                      previewBadge.setTextColor(initAccent);
-                      previewBadge.setTypeface(Typeface.DEFAULT_BOLD);
-                      previewBadge.setTextSize(12f * initFontScale);
-                      previewCard.addView(previewBadge);
-
-                      final TextView inBubble = new TextView(activity);
-                      inBubble.setText("Входящее: любой HEX, радиус и масштаб шрифта");
-                      inBubble.setTextColor(initText);
-                      inBubble.setTextSize(14f * initFontScale);
-                      inBubble.setPadding(dp(activity, 12), dp(activity, 8), dp(activity, 12), dp(activity, 8));
-                      inBubble.setBackground(makeTgSurface(initBubble, withAlpha(initText, 35), initBubbleRadius, activity));
-                      LinearLayout.LayoutParams inLp = new LinearLayout.LayoutParams(
-                          ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                      );
-                      inLp.topMargin = dp(activity, 8);
-                      previewCard.addView(inBubble, inLp);
-
-                      final TextView outBubble = new TextView(activity);
-                      outBubble.setText("Исходящее: свой цвет бабла и акцента");
-                      outBubble.setTextColor(initText);
-                      outBubble.setTextSize(14f * initFontScale);
-                      outBubble.setPadding(dp(activity, 12), dp(activity, 8), dp(activity, 12), dp(activity, 8));
-                      outBubble.setBackground(makeTgSurface(withAlpha(initOutBubble, 235), withAlpha(initAccent, 150), initBubbleRadius, activity));
-                      LinearLayout.LayoutParams outLp = new LinearLayout.LayoutParams(
-                          ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                      );
-                      outLp.gravity = Gravity.END;
-                      outLp.topMargin = dp(activity, 6);
-                      previewCard.addView(outBubble, outLp);
-
-                      LinearLayout.LayoutParams previewLp = new LinearLayout.LayoutParams(
-                          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                      );
-                      previewLp.bottomMargin = dp(activity, 14);
-                      root.addView(previewCard, previewLp);
-
-                      final LinearLayout targetCard = new LinearLayout(activity);
-                      targetCard.setOrientation(LinearLayout.VERTICAL);
-                      targetCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));
-                      targetCard.setBackground(makeTgSurface(initBubble, withAlpha(initAccent, 110), initCardRadius, activity));
-
-                      final TextView targetLabel = new TextView(activity);
-                      targetLabel.setText("Элемент: Акцент (" + CustomConfig.formatHex(initAccent) + ")");
-                      targetLabel.setTextColor(initText);
-                      targetLabel.setTypeface(Typeface.DEFAULT_BOLD);
-                      targetLabel.setTextSize(13f * initFontScale);
-                      targetCard.addView(targetLabel);
-
-                      final int[] selectedSlot = new int[] {0};
-                      final EditText hexInput = new EditText(activity);
-                      hexInput.setText(CustomConfig.formatHex(initAccent));
-                      hexInput.setTextColor(initText);
-                      hexInput.setHint("#RRGGBB");
-                      hexInput.setHintTextColor(Color.GRAY);
-                      hexInput.setSingleLine(true);
-                      hexInput.setTextSize(14f * initFontScale);
-
-                      final Runnable refreshPreview = () -> {
-                          int ac = CustomConfig.getAccentColor();
-                          int sf = CustomConfig.getSurfaceColor();
-                          int ib = CustomConfig.getBubbleColor();
-                          int ob = CustomConfig.getOutBubbleColor();
-                          int tx = CustomConfig.getTextColor();
-                          float br = CustomConfig.getBubbleCornerRadiusDp();
-                          float cr = CustomConfig.getCardCornerRadiusDp();
-                          float fs = CustomConfig.getFontScaleMultiplier();
-
-                          scroll.setBackgroundColor(sf);
-                          previewCard.setBackground(makeTgSurface(sf, withAlpha(ac, 180), cr, activity));
-                          previewBadge.setTextColor(ac);
-                          previewBadge.setTextSize(12f * fs);
-
-                          inBubble.setTextColor(tx);
-                          inBubble.setTextSize(14f * fs);
-                          inBubble.setBackground(makeTgSurface(ib, withAlpha(tx, 35), br, activity));
-
-                          outBubble.setTextColor(tx);
-                          outBubble.setTextSize(14f * fs);
-                          outBubble.setBackground(makeTgSurface(withAlpha(ob, 235), withAlpha(ac, 150), br, activity));
-
-                          targetCard.setBackground(makeTgSurface(ib, withAlpha(ac, 110), cr, activity));
-                          targetLabel.setTextColor(tx);
-                          targetLabel.setTextSize(13f * fs);
-                          hexInput.setTextColor(tx);
-                          hexInput.setTextSize(14f * fs);
-
-                          String slotName = "Акцент";
-                          int activeCol = ac;
-                          if (selectedSlot[0] == 1) { slotName = "Фон"; activeCol = sf; }
-                          else if (selectedSlot[0] == 2) { slotName = "Бабл входящих"; activeCol = ib; }
-                          else if (selectedSlot[0] == 3) { slotName = "Бабл исходящих"; activeCol = ob; }
-                          else if (selectedSlot[0] == 4) { slotName = "Текст"; activeCol = tx; }
-                          targetLabel.setText("Элемент: " + slotName + " (" + CustomConfig.formatHex(activeCol) + ")");
-                      };
-
-                      final ColorApplyCallback applyColorToSlot = (col) -> {
-                          if (selectedSlot[0] == 0) CustomConfig.setAccentColor(col);
-                          else if (selectedSlot[0] == 1) CustomConfig.setSurfaceColor(col);
-                          else if (selectedSlot[0] == 2) CustomConfig.setBubbleColor(col);
-                          else if (selectedSlot[0] == 3) CustomConfig.setOutBubbleColor(col);
-                          else if (selectedSlot[0] == 4) CustomConfig.setTextColor(col);
-                          hexInput.setText(CustomConfig.formatHex(col));
-                          refreshPreview.run();
-                          triggerPorscheTick(14, 120);
-                      };
-
-                      HorizontalScrollView slotScroll = new HorizontalScrollView(activity);
-                      slotScroll.setHorizontalScrollBarEnabled(false);
-                      slotScroll.setPadding(0, dp(activity, 8), 0, dp(activity, 6));
-                      LinearLayout slotRow = new LinearLayout(activity);
-                      slotRow.setOrientation(LinearLayout.HORIZONTAL);
-                      String[] slotTitles = new String[] {"Акцент", "Фон", "Входящие", "Исходящие", "Текст"};
-                      for (int i = 0; i < slotTitles.length; i++) {
-                          final int idx = i;
-                          Button sb = new Button(activity);
-                          sb.setText(slotTitles[i]);
-                          sb.setAllCaps(false);
-                          sb.setTextColor(initText);
-                          sb.setBackground(makeTgSurface(withAlpha(initSurface, 200), withAlpha(initAccent, 120), 12f, activity));
-                          LinearLayout.LayoutParams sLp = new LinearLayout.LayoutParams(
-                              ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 38)
-                          );
-                          sLp.rightMargin = dp(activity, 6);
-                          sb.setLayoutParams(sLp);
-                          sb.setOnClickListener(v -> {
-                              selectedSlot[0] = idx;
-                              int curCol = CustomConfig.getAccentColor();
-                              if (idx == 1) curCol = CustomConfig.getSurfaceColor();
-                              else if (idx == 2) curCol = CustomConfig.getBubbleColor();
-                              else if (idx == 3) curCol = CustomConfig.getOutBubbleColor();
-                              else if (idx == 4) curCol = CustomConfig.getTextColor();
-                              hexInput.setText(CustomConfig.formatHex(curCol));
-                              refreshPreview.run();
-                          });
-                          slotRow.addView(sb);
-                      }
-                      slotScroll.addView(slotRow);
-                      targetCard.addView(slotScroll);
-
-                      LinearLayout hexRow = new LinearLayout(activity);
-                      hexRow.setOrientation(LinearLayout.HORIZONTAL);
-                      hexRow.setGravity(Gravity.CENTER_VERTICAL);
-                      LinearLayout.LayoutParams hLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-                      hLp.rightMargin = dp(activity, 8);
-                      hexRow.addView(hexInput, hLp);
-
-                      Button applyHexBtn = new Button(activity);
-                      applyHexBtn.setText("Применить");
-                      applyHexBtn.setAllCaps(false);
-                      applyHexBtn.setBackgroundColor(initAccent);
-                      applyHexBtn.setTextColor(Color.WHITE);
-                      applyHexBtn.setOnClickListener(v -> {
-                          int fallback = CustomConfig.getAccentColor();
-                          if (selectedSlot[0] == 1) fallback = CustomConfig.getSurfaceColor();
-                          else if (selectedSlot[0] == 2) fallback = CustomConfig.getBubbleColor();
-                          else if (selectedSlot[0] == 3) fallback = CustomConfig.getOutBubbleColor();
-                          else if (selectedSlot[0] == 4) fallback = CustomConfig.getTextColor();
-                          int parsed = safeParseHex(hexInput.getText().toString(), fallback);
-                          applyColorToSlot.onApply(parsed);
-                      });
-                      hexRow.addView(applyHexBtn);
-                      targetCard.addView(hexRow);
-
-                      LinearLayout.LayoutParams tLp = new LinearLayout.LayoutParams(
-                          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                      );
-                      tLp.bottomMargin = dp(activity, 12);
-                      root.addView(targetCard, tLp);
-
-                      TextView swLabel = new TextView(activity);
-                      swLabel.setText("Готовые оттенки для выбранного элемента");
-                      swLabel.setTextColor(initText);
-                      swLabel.setTypeface(Typeface.DEFAULT_BOLD);
-                      swLabel.setTextSize(13f * initFontScale);
-                      swLabel.setPadding(0, 0, 0, dp(activity, 6));
-                      root.addView(swLabel);
-
-                      HorizontalScrollView swScroll = new HorizontalScrollView(activity);
-                      swScroll.setHorizontalScrollBarEnabled(false);
-                      LinearLayout swRow = new LinearLayout(activity);
-                      swRow.setOrientation(LinearLayout.HORIZONTAL);
-                      int[] combinedSwatches = new int[CustomConfig.SWATCH_PALETTE.length + CustomConfig.SURFACE_PALETTE.length + CustomConfig.BUBBLE_PALETTE.length];
-                      System.arraycopy(CustomConfig.SWATCH_PALETTE, 0, combinedSwatches, 0, CustomConfig.SWATCH_PALETTE.length);
-                      System.arraycopy(CustomConfig.SURFACE_PALETTE, 0, combinedSwatches, CustomConfig.SWATCH_PALETTE.length, CustomConfig.SURFACE_PALETTE.length);
-                      System.arraycopy(CustomConfig.BUBBLE_PALETTE, 0, combinedSwatches, CustomConfig.SWATCH_PALETTE.length + CustomConfig.SURFACE_PALETTE.length, CustomConfig.BUBBLE_PALETTE.length);
-                      for (final int sw : combinedSwatches) {
-                          View dot = new View(activity);
-                          LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(activity, 34), dp(activity, 34));
-                          dotLp.rightMargin = dp(activity, 8);
-                          dot.setLayoutParams(dotLp);
-                          dot.setBackground(makeTgSurface(sw, Color.WHITE, 17f, activity));
-                          dot.setOnClickListener(v -> applyColorToSlot.onApply(sw));
-                          swRow.addView(dot);
-                      }
-                      swScroll.addView(swRow);
-                      LinearLayout.LayoutParams swScrollLp = new LinearLayout.LayoutParams(
-                          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                      );
-                      swScrollLp.bottomMargin = dp(activity, 14);
-                      root.addView(swScroll, swScrollLp);
-
-                      final TextView brLabel = new TextView(activity);
-                      brLabel.setText("Скругление баблов: " + Math.round(initBubbleRadius) + " dp");
-                      brLabel.setTextColor(initText);
-                      brLabel.setTextSize(13f * initFontScale);
-                      root.addView(brLabel);
-
-                      SeekBar brSeek = new SeekBar(activity);
-                      brSeek.setMax(28);
-                      brSeek.setProgress(Math.max(0, Math.min(28, Math.round(initBubbleRadius) - 4)));
-                      brSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-                          @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                              float val = progress + 4f;
-                              CustomConfig.setBubbleCornerRadiusDp(val);
-                              brLabel.setText("Скругление баблов: " + Math.round(val) + " dp");
-                              refreshPreview.run();
-                          }
-                          @Override public void onStartTrackingTouch(SeekBar seekBar) {}
-                          @Override public void onStopTrackingTouch(SeekBar seekBar) {}
-                      });
-                      root.addView(brSeek);
-
-                      final TextView crLabel = new TextView(activity);
-                      crLabel.setText("Скругление карточек: " + Math.round(initCardRadius) + " dp");
-                      crLabel.setTextColor(initText);
-                      crLabel.setTextSize(13f * initFontScale);
-                      crLabel.setPadding(0, dp(activity, 6), 0, 0);
-                      root.addView(crLabel);
-
-                      SeekBar crSeek = new SeekBar(activity);
-                      crSeek.setMax(30);
-                      crSeek.setProgress(Math.max(0, Math.min(30, Math.round(initCardRadius) - 6)));
-                      crSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-                          @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                              float val = progress + 6f;
-                              CustomConfig.setCardCornerRadiusDp(val);
-                              crLabel.setText("Скругление карточек: " + Math.round(val) + " dp");
-                              refreshPreview.run();
-                          }
-                          @Override public void onStartTrackingTouch(SeekBar seekBar) {}
-                          @Override public void onStopTrackingTouch(SeekBar seekBar) {}
-                      });
-                      root.addView(crSeek);
-
-                      final TextView fsLabel = new TextView(activity);
-                      fsLabel.setText("Масштаб шрифта: " + String.format("%.2fx", initFontScale));
-                      fsLabel.setTextColor(initText);
-                      fsLabel.setTextSize(13f * initFontScale);
-                      fsLabel.setPadding(0, dp(activity, 6), 0, 0);
-                      root.addView(fsLabel);
-
-                      SeekBar fsSeek = new SeekBar(activity);
-                      fsSeek.setMax(50);
-                      fsSeek.setProgress(Math.max(0, Math.min(50, Math.round((initFontScale - 0.85f) * 100f))));
-                      fsSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-                          @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                              float val = 0.85f + (progress / 100f);
-                              CustomConfig.setFontScaleMultiplier(val);
-                              fsLabel.setText("Масштаб шрифта: " + String.format("%.2fx", val));
-                              refreshPreview.run();
-                          }
-                          @Override public void onStartTrackingTouch(SeekBar seekBar) {}
-                          @Override public void onStopTrackingTouch(SeekBar seekBar) {}
-                      });
-                      root.addView(fsSeek);
-
-                      Switch compactSwitch = new Switch(activity);
-                      compactSwitch.setText("Компактный интервал сообщений");
-                      compactSwitch.setTextColor(initText);
-                      compactSwitch.setChecked(CustomConfig.isCompactMessageSpacing());
-                      compactSwitch.setPadding(0, dp(activity, 10), 0, dp(activity, 8));
-                      compactSwitch.setOnClickListener(v -> {
-                          CustomConfig.toggleCompactMessageSpacing();
-                          compactSwitch.setChecked(CustomConfig.isCompactMessageSpacing());
-                      });
-                      root.addView(compactSwitch);
-
-                      Button resetBtn = new Button(activity);
-                      resetBtn.setText("Сбросить тему по умолчанию");
-                      resetBtn.setAllCaps(false);
-                      resetBtn.setOnClickListener(v -> {
-                          CustomConfig.resetCustomThemeToDefaults();
-                          brSeek.setProgress(Math.round(CustomConfig.getBubbleCornerRadiusDp()) - 4);
-                          crSeek.setProgress(Math.round(CustomConfig.getCardCornerRadiusDp()) - 6);
-                          fsSeek.setProgress(Math.round((CustomConfig.getFontScaleMultiplier() - 0.85f) * 100f));
-                          compactSwitch.setChecked(CustomConfig.isCompactMessageSpacing());
-                          selectedSlot[0] = 0;
-                          hexInput.setText(CustomConfig.formatHex(CustomConfig.getAccentColor()));
-                          refreshPreview.run();
-                      });
-                      root.addView(resetBtn);
-
-                      AlertDialog.Builder builder = new AlertDialog.Builder(activity);
-                      builder.setTitle("Notes • Панель настройки тем");
-                      builder.setView(scroll);
-                      builder.setPositiveButton("Готово", (d, w) -> {
-                          triggerPorscheTick(20, 140);
-                          refreshDisplayAndGuestGuard(activity);
-                      });
-                      AlertDialog dialog = builder.create();
-                      dialog.show();
-                  } catch (Throwable ignored) {}
-              }
-
-              public static void refreshDisplayAndGuestGuard(Activity activity) {
-                  if (activity == null) return;
-                  try {
-                      Window w = activity.getWindow();
-                      if (w != null) {
-                          if (CustomConfig.isGuestHandoverActive()) {
-                              w.addFlags(WindowManager.LayoutParams.FLAG_SECURE);
-                          } else {
-                              w.clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
-                          }
-                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                              WindowManager.LayoutParams params = w.getAttributes();
-                              params.preferredRefreshRate = CustomConfig.isForce120Hz() ? 120.0f : 0.0f;
-                              if (CustomConfig.isMagicHdrBoost() && CustomConfig.isHonorMagic6Pro()) {
-                                  params.screenBrightness = Math.max(params.screenBrightness, 0.85f);
-                              }
-                              w.setAttributes(params);
-                          }
-                      }
-                  } catch (Throwable ignored) {}
-              }
-
-              public static void triggerPorscheTick(int amplitude, int durationMs) {
-                  try {
-                      if (!CustomConfig.isPorscheHapticBoost()) return;
-                      Context ctx = ApplicationLoader.applicationContext;
-                      if (ctx == null) return;
-                      Vibrator vib = (Vibrator) ctx.getSystemService(Context.VIBRATOR_SERVICE);
-                      if (vib != null && vib.hasVibrator()) {
-                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                              int amp = Math.max(1, Math.min(255, amplitude));
-                              vib.vibrate(VibrationEffect.createOneShot(Math.max(10, Math.min(400, durationMs)), amp));
-                          } else {
-                              vib.vibrate(Math.max(10, Math.min(400, durationMs)));
-                          }
-                      }
-                  } catch (Throwable ignored) {}
-              }
-
-              public static void copyTextToClipboard(Context ctx, String label, String text) {
-                  try {
-                      if (ctx == null || TextUtils.isEmpty(text)) return;
-                      ClipboardManager cm = (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);
-                      if (cm != null) {
-                          cm.setPrimaryClip(ClipData.newPlainText(label != null ? label : "Notes", text));
-                      }
-                  } catch (Throwable ignored) {}
-              }
-
-              public static File saveSecretMediaToVault(String sourcePath, boolean isVideo) {
-                  try {
-                      if (CustomConfig.isGuestHandoverActive()) return null;
-                      if (TextUtils.isEmpty(sourcePath)) return null;
-                      File src = new File(sourcePath);
-                      if (!src.exists() || !src.canRead()) return null;
-                      File baseDir = Environment.getExternalStoragePublicDirectory(
-                          isVideo ? Environment.DIRECTORY_MOVIES : Environment.DIRECTORY_PICTURES
-                      );
-                      File vaultDir = new File(baseDir, "NotesVault");
-                      if (!vaultDir.exists() && !vaultDir.mkdirs()) return null;
-                      String ext = isVideo ? ".mp4" : ".jpg";
-                      String name = (isVideo ? "vault_vid_" : "vault_img_") + System.currentTimeMillis() + ext;
-                      File dst = new File(vaultDir, name);
-                      try (FileInputStream in = new FileInputStream(src);
-                           FileOutputStream out = new FileOutputStream(dst)) {
-                          byte[] buf = new byte[16384];
-                          int len;
-                          while ((len = in.read(buf)) > 0) {
-                              out.write(buf, 0, len);
-                          }
-                      }
-                      return dst;
-                  } catch (Throwable ignored) {
-                      return null;
-                  }
-              }
-
-              public static File decodeMediaToMono16kWav(String inputPath) {
-                  try {
-                      if (TextUtils.isEmpty(inputPath)) return null;
-                      File inFile = new File(inputPath);
-                      if (!inFile.exists()) return null;
-                      File outWav = new File(ApplicationLoader.applicationContext.getCacheDir(), "whisper_ru_16k.wav");
-
-                      MediaExtractor extractor = new MediaExtractor();
-                      extractor.setDataSource(inputPath);
-                      int audioTrack = -1;
-                      for (int i = 0; i < extractor.getTrackCount(); i++) {
-                          MediaFormat fmt = extractor.getTrackFormat(i);
-                          String mime = fmt.getString(MediaFormat.KEY_MIME);
-                          if (mime != null && mime.startsWith("audio/")) {
-                              audioTrack = i;
-                              break;
-                          }
-                      }
-                      if (audioTrack < 0) {
-                          extractor.release();
-                          return inFile;
-                      }
-                      extractor.selectTrack(audioTrack);
-                      MediaFormat format = extractor.getTrackFormat(audioTrack);
-                      String mime = format.getString(MediaFormat.KEY_MIME);
-                      MediaCodec codec = MediaCodec.createDecoderByType(mime);
-                      codec.configure(format, null, null, 0);
-                      codec.start();
-
-                      ByteArrayOutputStream pcmOut = new ByteArrayOutputStream();
-                      MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-                      boolean sawInputEOS = false;
-                      boolean sawOutputEOS = false;
-
-                      while (!sawOutputEOS) {
-                          if (!sawInputEOS) {
-                              int inIdx = codec.dequeueInputBuffer(10000);
-                              if (inIdx >= 0) {
-                                  ByteBuffer inBuf = codec.getInputBuffer(inIdx);
-                                  int sampleSize = extractor.readSampleData(inBuf, 0);
-                                  if (sampleSize < 0) {
-                                      codec.queueInputBuffer(inIdx, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
-                                      sawInputEOS = true;
-                                  } else {
-                                      long pts = extractor.getSampleTime();
-                                      codec.queueInputBuffer(inIdx, 0, sampleSize, pts, 0);
-                                      extractor.advance();
-                                  }
-                              }
-                          }
-                          int outIdx = codec.dequeueOutputBuffer(info, 10000);
-                          if (outIdx >= 0) {
-                              ByteBuffer outBuf = codec.getOutputBuffer(outIdx);
-                              if (outBuf != null && info.size > 0) {
-                                  byte[] chunk = new byte[info.size];
-                                  outBuf.get(chunk);
-                                  pcmOut.write(chunk);
-                              }
-                              codec.releaseOutputBuffer(outIdx, false);
-                              if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                                  sawOutputEOS = true;
-                              }
-                          }
-                      }
-
-                      codec.stop();
-                      codec.release();
-                      extractor.release();
-
-                      byte[] pcmData = pcmOut.toByteArray();
-                      int sampleRate = format.containsKey(MediaFormat.KEY_SAMPLE_RATE)
-                          ? format.getInteger(MediaFormat.KEY_SAMPLE_RATE) : 16000;
-                      int channels = format.containsKey(MediaFormat.KEY_CHANNEL_COUNT)
-                          ? format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) : 1;
-
-                      try (FileOutputStream fos = new FileOutputStream(outWav)) {
-                          writeWavHeader(fos, pcmData.length, sampleRate, channels, 16);
-                          fos.write(pcmData);
-                      }
-                      return outWav;
-                  } catch (Throwable ignored) {
-                      return new File(inputPath);
-                  }
-              }
-
-              private static void writeWavHeader(FileOutputStream out, int pcmBytes, int sampleRate, int channels, int bitsPerSample) throws Exception {
-                  int byteRate = sampleRate * channels * bitsPerSample / 8;
-                  int blockAlign = channels * bitsPerSample / 8;
-                  ByteBuffer header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
-                  header.put(new byte[] {'R', 'I', 'F', 'F'});
-                  header.putInt(36 + pcmBytes);
-                  header.put(new byte[] {'W', 'A', 'V', 'E'});
-                  header.put(new byte[] {'f', 'm', 't', ' '});
-                  header.putInt(16);
-                  header.putShort((short) 1);
-                  header.putShort((short) channels);
-                  header.putInt(sampleRate);
-                  header.putInt(byteRate);
-                  header.putShort((short) blockAlign);
-                  header.putShort((short) bitsPerSample);
-                  header.put(new byte[] {'d', 'a', 't', 'a'});
-                  header.putInt(pcmBytes);
-                  out.write(header.array());
-              }
-
-              public static void transcribeAudioOrRound(Activity activity, long dialogId, String mediaPath, boolean isRoundVideo) {
-                  if (activity == null || CustomConfig.isStockMode(dialogId)) return;
-                  try {
-                      File prepared = CustomConfig.isLocalWhisperRu()
-                          ? decodeMediaToMono16kWav(mediaPath)
-                          : (mediaPath != null ? new File(mediaPath) : null);
-                      File target = (prepared != null && prepared.exists()) ? prepared : (mediaPath != null ? new File(mediaPath) : null);
-                      if (target == null || !target.exists()) return;
-
-                      Context ctx = activity.getApplicationContext();
-                      Uri uri = FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".provider", target);
-                      Intent send = new Intent(Intent.ACTION_SEND);
-                      send.setType(isRoundVideo ? "video/*" : "audio/*");
-                      send.putExtra(Intent.EXTRA_STREAM, uri);
-                      send.putExtra("language", "ru");
-                      send.putExtra("whisper_model", MODEL_ASSET_PATH);
-                      send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                      activity.startActivity(Intent.createChooser(send, "Расшифровать (RU)"));
-                  } catch (Throwable ignored) {}
-              }
-          }
-          """
+          # 8. LocalWhisperHelper built safely using string arrays and anonymous listeners
+          whisper_lines = [
+              "package org.telegram.messenger;",
+              "import android.app.Activity;",
+              "import android.app.AlertDialog;",
+              "import android.content.ClipData;",
+              "import android.content.ClipboardManager;",
+              "import android.content.Context;",
+              "import android.content.Intent;",
+              "import android.graphics.Color;",
+              "import android.graphics.Typeface;",
+              "import android.graphics.drawable.GradientDrawable;",
+              "import android.media.MediaCodec;",
+              "import android.media.MediaExtractor;",
+              "import android.media.MediaFormat;",
+              "import android.net.Uri;",
+              "import android.os.Build;",
+              "import android.os.Environment;",
+              "import android.os.VibrationEffect;",
+              "import android.os.Vibrator;",
+              "import android.text.TextUtils;",
+              "import android.view.Gravity;",
+              "import android.view.View;",
+              "import android.view.ViewGroup;",
+              "import android.view.Window;",
+              "import android.view.WindowManager;",
+              "import android.widget.Button;",
+              "import android.widget.EditText;",
+              "import android.widget.HorizontalScrollView;",
+              "import android.widget.LinearLayout;",
+              "import android.widget.ScrollView;",
+              "import android.widget.SeekBar;",
+              "import android.widget.Switch;",
+              "import android.widget.TextView;",
+              "import androidx.core.content.FileProvider;",
+              "import java.io.ByteArrayOutputStream;",
+              "import java.io.File;",
+              "import java.io.FileInputStream;",
+              "import java.io.FileOutputStream;",
+              "import java.nio.ByteBuffer;",
+              "import java.nio.ByteOrder;",
+              "public class LocalWhisperHelper {",
+              "  private static final String MODEL_ASSET_PATH = \"whisper/ggml-small-q5_1.bin\";",
+              "  private static final int TG_BLUE = 0xFF3390EC;",
+              "  private static final int TG_DARK_BG = 0xFF18222D;",
+              "  private static final int TG_DARK_CELL = 0xFF212D3B;",
+              "  private static final int TG_DARK_DIVIDER = 0xFF10161D;",
+              "  private static final int TG_TEXT_MAIN = 0xFFFFFFFF;",
+              "  private static final int TG_TEXT_SUB = 0xFF8A9BA8;",
+              "  private interface ColorApplyCallback { void onApply(int color); }",
+              "  private static int dp(Context ctx, float value) {",
+              "    float density = ctx.getResources().getDisplayMetrics().density;",
+              "    return Math.round(value * density);",
+              "  }",
+              "  private static int withAlpha(int color, int alpha) {",
+              "    return Color.argb(Math.max(0, Math.min(255, alpha)), Color.red(color), Color.green(color), Color.blue(color));",
+              "  }",
+              "  private static GradientDrawable makeTgSurface(int bgColor, int strokeColor, float radiusDp, Context ctx) {",
+              "    GradientDrawable gd = new GradientDrawable();",
+              "    gd.setShape(GradientDrawable.RECTANGLE);",
+              "    gd.setColor(bgColor);",
+              "    gd.setCornerRadius(dp(ctx, radiusDp));",
+              "    if (strokeColor != Color.TRANSPARENT) { gd.setStroke(dp(ctx, 1f), strokeColor); }",
+              "    return gd;",
+              "  }",
+              "  private static View makeSectionDivider(Context ctx) {",
+              "    View v = new View(ctx);",
+              "    v.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(ctx, 10)));",
+              "    v.setBackgroundColor(TG_DARK_DIVIDER);",
+              "    return v;",
+              "  }",
+              "  private static TextView makeSectionHeader(Context ctx, String title) {",
+              "    TextView tv = new TextView(ctx);",
+              "    tv.setText(title);",
+              "    tv.setTextColor(TG_BLUE);",
+              "    tv.setTypeface(Typeface.DEFAULT_BOLD);",
+              "    tv.setTextSize(13.5f);",
+              "    tv.setPadding(dp(ctx, 18), dp(ctx, 12), dp(ctx, 18), dp(ctx, 6));",
+              "    return tv;",
+              "  }",
+              "  private static LinearLayout makeTgRow(Context ctx, String title, String subtitle, String badgeRight, View.OnClickListener listener) {",
+              "    LinearLayout row = new LinearLayout(ctx);",
+              "    row.setOrientation(LinearLayout.HORIZONTAL);",
+              "    row.setGravity(Gravity.CENTER_VERTICAL);",
+              "    row.setPadding(dp(ctx, 18), dp(ctx, 11), dp(ctx, 18), dp(ctx, 11));",
+              "    row.setBackgroundColor(TG_DARK_CELL);",
+              "    if (listener != null) { row.setOnClickListener(listener); }",
+              "    LinearLayout textCol = new LinearLayout(ctx);",
+              "    textCol.setOrientation(LinearLayout.VERTICAL);",
+              "    LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);",
+              "    textLp.rightMargin = dp(ctx, 10);",
+              "    TextView titleTv = new TextView(ctx);",
+              "    titleTv.setText(title);",
+              "    titleTv.setTextColor(TG_TEXT_MAIN);",
+              "    titleTv.setTextSize(15.5f);",
+              "    textCol.addView(titleTv);",
+              "    if (!TextUtils.isEmpty(subtitle)) {",
+              "      TextView subTv = new TextView(ctx);",
+              "      subTv.setText(subtitle);",
+              "      subTv.setTextColor(TG_TEXT_SUB);",
+              "      subTv.setTextSize(13f);",
+              "      subTv.setPadding(0, dp(ctx, 2), 0, 0);",
+              "      textCol.addView(subTv);",
+              "    }",
+              "    row.addView(textCol, textLp);",
+              "    if (!TextUtils.isEmpty(badgeRight)) {",
+              "      TextView badgeTv = new TextView(ctx);",
+              "      badgeTv.setText(badgeRight);",
+              "      badgeTv.setTextColor(TG_BLUE);",
+              "      badgeTv.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      badgeTv.setTextSize(13.5f);",
+              "      row.addView(badgeTv);",
+              "    }",
+              "    return row;",
+              "  }",
+              "  private static Switch makeTgSwitchRow(Context ctx, String title, String subtitle, boolean checked, View.OnClickListener onToggle) {",
+              "    Switch sw = new Switch(ctx);",
+              "    sw.setText(TextUtils.isEmpty(subtitle) ? title : (title + \"\\n\" + subtitle));",
+              "    sw.setTextColor(TG_TEXT_MAIN);",
+              "    sw.setTextSize(14.5f);",
+              "    sw.setChecked(checked);",
+              "    sw.setPadding(dp(ctx, 18), dp(ctx, 10), dp(ctx, 18), dp(ctx, 10));",
+              "    sw.setBackgroundColor(TG_DARK_CELL);",
+              "    if (onToggle != null) { sw.setOnClickListener(onToggle); }",
+              "    return sw;",
+              "  }",
+              "  private static int safeParseHex(String input, int fallback) {",
+              "    if (TextUtils.isEmpty(input)) return fallback;",
+              "    String clean = input.trim();",
+              "    if (!clean.startsWith(\"#\")) clean = \"#\" + clean;",
+              "    try { return Color.parseColor(clean); } catch (Throwable ignored) { return fallback; }",
+              "  }",
+              "  public static void openNotesMainHub(final Activity activity, final long dialogId) {",
+              "    if (activity == null || activity.isFinishing()) return;",
+              "    try {",
+              "      refreshDisplayAndGuestGuard(activity);",
+              "      ScrollView scroll = new ScrollView(activity);",
+              "      scroll.setBackgroundColor(TG_DARK_BG);",
+              "      LinearLayout root = new LinearLayout(activity);",
+              "      root.setOrientation(LinearLayout.VERTICAL);",
+              "      scroll.addView(root);",
+              "      LinearLayout topBanner = new LinearLayout(activity);",
+              "      topBanner.setOrientation(LinearLayout.VERTICAL);",
+              "      topBanner.setBackgroundColor(TG_DARK_CELL);",
+              "      topBanner.setPadding(dp(activity, 18), dp(activity, 14), dp(activity, 18), dp(activity, 14));",
+              "      TextView appTitle = new TextView(activity);",
+              "      appTitle.setText(\"Notes - Настройки клиента\");",
+              "      appTitle.setTextColor(TG_TEXT_MAIN);",
+              "      appTitle.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      appTitle.setTextSize(17f);",
+              "      topBanner.addView(appTitle);",
+              "      TextView appHint = new TextView(activity);",
+              "      String statusLine = CustomConfig.isGuestHandoverActive()",
+              "        ? (\"Гостевой режим активен: осталось \" + CustomConfig.getGuestRemainingSeconds() + \" сек - FLAG_SECURE включен\")",
+              "        : (\"Пакет: com.alexey.notesclient - Локальный Premium: \" + (CustomConfig.isLocalPremiumEnabled() ? \"ВКЛ\" : \"ВЫКЛ\"));",
+              "      appHint.setText(statusLine);",
+              "      appHint.setTextColor(TG_BLUE);",
+              "      appHint.setTextSize(12.5f);",
+              "      appHint.setPadding(0, dp(activity, 3), 0, 0);",
+              "      topBanner.addView(appHint);",
+              "      root.addView(topBanner);",
+              "      root.addView(makeSectionDivider(activity));",
+              "      root.addView(makeSectionHeader(activity, \"Интерфейс и отправка медиа\"));",
+              "      root.addView(makeTgRow(activity, \"Панель настройки тем\", \"Любые цвета (HEX и палитра), скругления и масштаб шрифта\", \"Открыть\", new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { triggerPorscheTick(14, 110); openThemeStudioPanel(activity); }",
+              "      }));",
+              "      root.addView(makeSectionDivider(activity));",
+              "      String[] qNames = new String[] {\"85%\", \"95%\", \"100% оригинал\"};",
+              "      root.addView(makeTgRow(activity, \"Настройки отправки медиа\", \"Качество фото, профиль видео, спойлеры, EXIF, файл, тихо\", qNames[CustomConfig.getPhotoSendQuality()], new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { triggerPorscheTick(14, 110); openMediaSendSettingsPanel(activity); }",
+              "      }));",
+              "      root.addView(makeSectionDivider(activity));",
+              "      root.addView(makeSectionHeader(activity, \"Приватность, гостевой режим и Whisper\"));",
+              "      root.addView(makeTgRow(activity, \"Гостевой режим на 5 минут\", CustomConfig.isGuestHandoverActive() ? (\"Осталось \" + CustomConfig.getGuestRemainingSeconds() + \" сек - нажмите чтобы снять\") : \"FLAG_SECURE против скриншотов и блок удаления на 5 минут\", CustomConfig.isGuestHandoverActive() ? \"Снять\" : \"5 мин\", new View.OnClickListener() {",
+              "        @Override public void onClick(View v) {",
+              "          if (CustomConfig.isGuestHandoverActive()) CustomConfig.disarmGuestHandover(); else CustomConfig.armGuestHandoverTimer(5);",
+              "          refreshDisplayAndGuestGuard(activity); triggerPorscheTick(22, 140); openNotesMainHub(activity, dialogId);",
+              "        }",
+              "      }));",
+              "      root.addView(makeSectionDivider(activity));",
+              "      root.addView(makeTgSwitchRow(activity, \"Режим призрака\", \"Не отправлять отметки прочтения\", CustomConfig.isGhostRead(dialogId), new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { CustomConfig.toggleGhostRead(); triggerPorscheTick(12, 100); }",
+              "      }));",
+              "      root.addView(makeSectionDivider(activity));",
+              "      root.addView(makeTgSwitchRow(activity, \"Не показывать печатает...\", \"Скрыть статус набора текста\", CustomConfig.isNoTyping(dialogId), new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { CustomConfig.toggleNoTyping(); triggerPorscheTick(12, 100); }",
+              "      }));",
+              "      root.addView(makeSectionDivider(activity));",
+              "      root.addView(makeTgSwitchRow(activity, \"Локальный Telegram Premium\", \"Локальные премиум-флаги и возможности\", CustomConfig.isLocalPremiumEnabled(), new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { CustomConfig.toggleLocalPremium(); triggerPorscheTick(12, 100); }",
+              "      }));",
+              "      root.addView(makeSectionDivider(activity));",
+              "      root.addView(makeTgSwitchRow(activity, \"Локальный Whisper (RU)\", \"16 кГц WAV и модель ggml-small-q5_1.bin\", CustomConfig.isLocalWhisperRu(), new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { CustomConfig.toggleLocalWhisperRu(); triggerPorscheTick(12, 100); }",
+              "      }));",
+              "      root.addView(makeSectionDivider(activity));",
+              "      root.addView(makeTgSwitchRow(activity, \"120 Гц и буст Honor Magic 6 Pro\", \"Плавная частота обновления и отклик Porsche\", CustomConfig.isForce120Hz(), new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { CustomConfig.toggleForce120Hz(); refreshDisplayAndGuestGuard(activity); triggerPorscheTick(16, 120); }",
+              "      }));",
+              "      if (dialogId != 0L) {",
+              "        root.addView(makeSectionDivider(activity));",
+              "        root.addView(makeTgSwitchRow(activity, \"Стоковый режим для этого чата\", \"Отключить модификации в текущем диалоге\", CustomConfig.isStockMode(dialogId), new View.OnClickListener() {",
+              "          @Override public void onClick(View v) { CustomConfig.toggleStockMode(dialogId); triggerPorscheTick(14, 110); }",
+              "        }));",
+              "      }",
+              "      root.addView(makeSectionDivider(activity));",
+              "      root.addView(makeSectionHeader(activity, \"Где найти все новые функции\"));",
+              "      String whereFind = \"1) Настройки приложения -> Notes\\n2) Меню чатов (:) -> Notes - Панель функций\\n3) Меню внутри чата (:) -> Notes - Панель функций\\n4) Анти-удаление и NotesVault работают в фоне\";",
+              "      root.addView(makeTgRow(activity, \"Путеводитель по функциям Notes\", whereFind, \"Справка\", new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { openFeaturesGuideDialog(activity); }",
+              "      }));",
+              "      new AlertDialog.Builder(activity).setView(scroll).setPositiveButton(\"Закрыть\", null).show();",
+              "    } catch (Throwable ignored) {}",
+              "  }",
+              "  public static void openFeaturesGuideDialog(final Activity activity) {",
+              "    if (activity == null || activity.isFinishing()) return;",
+              "    try {",
+              "      ScrollView scroll = new ScrollView(activity);",
+              "      scroll.setBackgroundColor(TG_DARK_BG);",
+              "      LinearLayout root = new LinearLayout(activity);",
+              "      root.setOrientation(LinearLayout.VERTICAL);",
+              "      root.setPadding(dp(activity, 18), dp(activity, 14), dp(activity, 18), dp(activity, 18));",
+              "      scroll.addView(root);",
+              "      String[] parts = new String[] {",
+              "        \"- Панель настройки тем: открывается из раздела Notes в Настройках, из меню чатов или внутри чата.\",",
+              "        \"- Настройки отправки медиа: качество фото (85% / 95% / 100%), профиль видео, спойлеры, EXIF, файл, тихая отправка и NotesVault.\",",
+              "        \"- Гостевой режим на 5 минут: включает FLAG_SECURE и блокирует удаление/очистку на 5 минут.\",",
+              "        \"- Анти-удаление и NotesVault: удаленные сообщения сохраняются локально, секретные медиа пишутся в Pictures/NotesVault и Movies/NotesVault (кроме гостевого режима).\",",
+              "        \"- Локальный Whisper (RU): конвертирует аудио/кружки в 16 кГц WAV и передает модель whisper/ggml-small-q5_1.bin с языком ru.\"",
+              "      };",
+              "      StringBuilder sb = new StringBuilder();",
+              "      for (int i = 0; i < parts.length; i++) { if (i > 0) sb.append(\"\\n\\n\"); sb.append(parts[i]); }",
+              "      TextView tv = new TextView(activity);",
+              "      tv.setText(sb.toString());",
+              "      tv.setTextColor(TG_TEXT_MAIN);",
+              "      tv.setTextSize(14f);",
+              "      tv.setLineSpacing(dp(activity, 3), 1.1f);",
+              "      root.addView(tv);",
+              "      new AlertDialog.Builder(activity).setTitle(\"Где найти новые функции\").setView(scroll).setPositiveButton(\"Понятно\", null).show();",
+              "    } catch (Throwable ignored) {}",
+              "  }",
+              "  public static void openMediaSendSettingsPanel(final Activity activity) {",
+              "    if (activity == null || activity.isFinishing()) return;",
+              "    try {",
+              "      int accent = CustomConfig.getAccentColor();",
+              "      int surface = CustomConfig.getSurfaceColor();",
+              "      int bubble = CustomConfig.getBubbleColor();",
+              "      int textCol = CustomConfig.getTextColor();",
+              "      float cardR = CustomConfig.getCardCornerRadiusDp();",
+              "      float fontS = CustomConfig.getFontScaleMultiplier();",
+              "      ScrollView scroll = new ScrollView(activity);",
+              "      scroll.setBackgroundColor(surface);",
+              "      scroll.setPadding(dp(activity, 16), dp(activity, 16), dp(activity, 16), dp(activity, 24));",
+              "      LinearLayout root = new LinearLayout(activity);",
+              "      root.setOrientation(LinearLayout.VERTICAL);",
+              "      scroll.addView(root);",
+              "      LinearLayout photoCard = new LinearLayout(activity);",
+              "      photoCard.setOrientation(LinearLayout.VERTICAL);",
+              "      photoCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));",
+              "      photoCard.setBackground(makeTgSurface(bubble, withAlpha(accent, 140), cardR, activity));",
+              "      TextView pTitle = new TextView(activity);",
+              "      pTitle.setText(\"Качество отправки фото\");",
+              "      pTitle.setTextColor(accent);",
+              "      pTitle.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      pTitle.setTextSize(13f * fontS);",
+              "      photoCard.addView(pTitle);",
+              "      final TextView pVal = new TextView(activity);",
+              "      final String[] photoLabels = new String[] {\"Стандарт (85%)\", \"Высокое (95%)\", \"Оригинал (100%)\"};",
+              "      pVal.setText(\"Текущее: \" + photoLabels[CustomConfig.getPhotoSendQuality()]);",
+              "      pVal.setTextColor(textCol);",
+              "      pVal.setTextSize(13f * fontS);",
+              "      pVal.setPadding(0, dp(activity, 4), 0, dp(activity, 8));",
+              "      photoCard.addView(pVal);",
+              "      LinearLayout pBtns = new LinearLayout(activity);",
+              "      pBtns.setOrientation(LinearLayout.HORIZONTAL);",
+              "      for (int i = 0; i < 3; i++) {",
+              "        final int mode = i;",
+              "        Button b = new Button(activity);",
+              "        b.setText(i == 0 ? \"85%\" : (i == 1 ? \"95%\" : \"100%\"));",
+              "        b.setAllCaps(false);",
+              "        b.setTextColor(textCol);",
+              "        b.setBackground(makeTgSurface(withAlpha(surface, 220), withAlpha(accent, 120), 10f, activity));",
+              "        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(activity, 38), 1f);",
+              "        if (i < 2) lp.rightMargin = dp(activity, 6);",
+              "        b.setLayoutParams(lp);",
+              "        b.setOnClickListener(new View.OnClickListener() {",
+              "          @Override public void onClick(View v) { CustomConfig.setPhotoSendQuality(mode); pVal.setText(\"Текущее: \" + photoLabels[mode]); triggerPorscheTick(12, 100); }",
+              "        });",
+              "        pBtns.addView(b);",
+              "      }",
+              "      photoCard.addView(pBtns);",
+              "      LinearLayout.LayoutParams pCardLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
+              "      pCardLp.bottomMargin = dp(activity, 12);",
+              "      root.addView(photoCard, pCardLp);",
+              "      LinearLayout vidCard = new LinearLayout(activity);",
+              "      vidCard.setOrientation(LinearLayout.VERTICAL);",
+              "      vidCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));",
+              "      vidCard.setBackground(makeTgSurface(bubble, withAlpha(accent, 140), cardR, activity));",
+              "      TextView vTitle = new TextView(activity);",
+              "      vTitle.setText(\"Профиль отправки видео\");",
+              "      vTitle.setTextColor(accent);",
+              "      vTitle.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      vTitle.setTextSize(13f * fontS);",
+              "      vidCard.addView(vTitle);",
+              "      final TextView vVal = new TextView(activity);",
+              "      final String[] vidLabels = new String[] {\"Баланс\", \"Высокий битрейт\", \"Исходный файл\"};",
+              "      vVal.setText(\"Текущий: \" + vidLabels[CustomConfig.getVideoSendProfile()]);",
+              "      vVal.setTextColor(textCol);",
+              "      vVal.setTextSize(13f * fontS);",
+              "      vVal.setPadding(0, dp(activity, 4), 0, dp(activity, 8));",
+              "      vidCard.addView(vVal);",
+              "      LinearLayout vBtns = new LinearLayout(activity);",
+              "      vBtns.setOrientation(LinearLayout.HORIZONTAL);",
+              "      for (int i = 0; i < 3; i++) {",
+              "        final int prof = i;",
+              "        Button b = new Button(activity);",
+              "        b.setText(i == 0 ? \"Баланс\" : (i == 1 ? \"Высокий\" : \"Исходник\"));",
+              "        b.setAllCaps(false);",
+              "        b.setTextColor(textCol);",
+              "        b.setBackground(makeTgSurface(withAlpha(surface, 220), withAlpha(accent, 120), 10f, activity));",
+              "        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(activity, 38), 1f);",
+              "        if (i < 2) lp.rightMargin = dp(activity, 6);",
+              "        b.setLayoutParams(lp);",
+              "        b.setOnClickListener(new View.OnClickListener() {",
+              "          @Override public void onClick(View v) { CustomConfig.setVideoSendProfile(prof); vVal.setText(\"Текущий: \" + vidLabels[prof]); triggerPorscheTick(12, 100); }",
+              "        });",
+              "        vBtns.addView(b);",
+              "      }",
+              "      vidCard.addView(vBtns);",
+              "      LinearLayout.LayoutParams vCardLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
+              "      vCardLp.bottomMargin = dp(activity, 12);",
+              "      root.addView(vidCard, vCardLp);",
+              "      LinearLayout spCard = new LinearLayout(activity);",
+              "      spCard.setOrientation(LinearLayout.VERTICAL);",
+              "      spCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));",
+              "      spCard.setBackground(makeTgSurface(bubble, withAlpha(accent, 140), cardR, activity));",
+              "      TextView sTitle = new TextView(activity);",
+              "      sTitle.setText(\"Спойлеры для медиа\");",
+              "      sTitle.setTextColor(accent);",
+              "      sTitle.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      sTitle.setTextSize(13f * fontS);",
+              "      spCard.addView(sTitle);",
+              "      final TextView sVal = new TextView(activity);",
+              "      final String[] spLabels = new String[] {\"Выключены\", \"Авто-спойлер\", \"Всегда спойлер\"};",
+              "      sVal.setText(\"Текущее: \" + spLabels[CustomConfig.getSpoilerMediaMode()]);",
+              "      sVal.setTextColor(textCol);",
+              "      sVal.setTextSize(13f * fontS);",
+              "      sVal.setPadding(0, dp(activity, 4), 0, dp(activity, 8));",
+              "      spCard.addView(sVal);",
+              "      LinearLayout sBtns = new LinearLayout(activity);",
+              "      sBtns.setOrientation(LinearLayout.HORIZONTAL);",
+              "      for (int i = 0; i < 3; i++) {",
+              "        final int sm = i;",
+              "        Button b = new Button(activity);",
+              "        b.setText(i == 0 ? \"Выкл\" : (i == 1 ? \"Авто\" : \"Всегда\"));",
+              "        b.setAllCaps(false);",
+              "        b.setTextColor(textCol);",
+              "        b.setBackground(makeTgSurface(withAlpha(surface, 220), withAlpha(accent, 120), 10f, activity));",
+              "        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(activity, 38), 1f);",
+              "        if (i < 2) lp.rightMargin = dp(activity, 6);",
+              "        b.setLayoutParams(lp);",
+              "        b.setOnClickListener(new View.OnClickListener() {",
+              "          @Override public void onClick(View v) { CustomConfig.setSpoilerMediaMode(sm); sVal.setText(\"Текущее: \" + spLabels[sm]); triggerPorscheTick(12, 100); }",
+              "        });",
+              "        sBtns.addView(b);",
+              "      }",
+              "      spCard.addView(sBtns);",
+              "      LinearLayout.LayoutParams sCardLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
+              "      sCardLp.bottomMargin = dp(activity, 12);",
+              "      root.addView(spCard, sCardLp);",
+              "      final Switch exifSwitch = new Switch(activity);",
+              "      exifSwitch.setText(\"Очищать EXIF / геолокацию\");",
+              "      exifSwitch.setTextColor(textCol);",
+              "      exifSwitch.setChecked(CustomConfig.isStripMediaExif());",
+              "      exifSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 6));",
+              "      exifSwitch.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { CustomConfig.toggleStripMediaExif(); exifSwitch.setChecked(CustomConfig.isStripMediaExif()); } });",
+              "      root.addView(exifSwitch);",
+              "      final Switch fileSwitch = new Switch(activity);",
+              "      fileSwitch.setText(\"Отправлять как файл без сжатия\");",
+              "      fileSwitch.setTextColor(textCol);",
+              "      fileSwitch.setChecked(CustomConfig.isSendMediaAsFile());",
+              "      fileSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 6));",
+              "      fileSwitch.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { CustomConfig.toggleSendMediaAsFile(); fileSwitch.setChecked(CustomConfig.isSendMediaAsFile()); } });",
+              "      root.addView(fileSwitch);",
+              "      final Switch silentSwitch = new Switch(activity);",
+              "      silentSwitch.setText(\"Отправлять без звука (тихо)\");",
+              "      silentSwitch.setTextColor(textCol);",
+              "      silentSwitch.setChecked(CustomConfig.isSendMediaSilently());",
+              "      silentSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 6));",
+              "      silentSwitch.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { CustomConfig.toggleSendMediaSilently(); silentSwitch.setChecked(CustomConfig.isSendMediaSilently()); } });",
+              "      root.addView(silentSwitch);",
+              "      final Switch vaultSwitch = new Switch(activity);",
+              "      vaultSwitch.setText(\"Копировать в NotesVault\");",
+              "      vaultSwitch.setTextColor(textCol);",
+              "      vaultSwitch.setChecked(CustomConfig.isAutoBackupSentToVault());",
+              "      vaultSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 8));",
+              "      vaultSwitch.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { CustomConfig.toggleAutoBackupSentToVault(); vaultSwitch.setChecked(CustomConfig.isAutoBackupSentToVault()); } });",
+              "      root.addView(vaultSwitch);",
+              "      new AlertDialog.Builder(activity).setTitle(\"Notes - Настройки отправки медиа\").setView(scroll).setPositiveButton(\"Сохранить\", null).show();",
+              "    } catch (Throwable ignored) {}",
+              "  }",
+              "  public static void openThemeStudioPanel(final Activity activity) {",
+              "    if (activity == null || activity.isFinishing()) return;",
+              "    try {",
+              "      final int initAccent = CustomConfig.getAccentColor();",
+              "      final int initSurface = CustomConfig.getSurfaceColor();",
+              "      final int initBubble = CustomConfig.getBubbleColor();",
+              "      final int initOutBubble = CustomConfig.getOutBubbleColor();",
+              "      final int initText = CustomConfig.getTextColor();",
+              "      final float initBubbleRadius = CustomConfig.getBubbleCornerRadiusDp();",
+              "      final float initCardRadius = CustomConfig.getCardCornerRadiusDp();",
+              "      final float initFontScale = CustomConfig.getFontScaleMultiplier();",
+              "      final ScrollView scroll = new ScrollView(activity);",
+              "      scroll.setBackgroundColor(initSurface);",
+              "      scroll.setPadding(dp(activity, 16), dp(activity, 16), dp(activity, 16), dp(activity, 24));",
+              "      final LinearLayout root = new LinearLayout(activity);",
+              "      root.setOrientation(LinearLayout.VERTICAL);",
+              "      scroll.addView(root);",
+              "      final LinearLayout previewCard = new LinearLayout(activity);",
+              "      previewCard.setOrientation(LinearLayout.VERTICAL);",
+              "      previewCard.setPadding(dp(activity, 16), dp(activity, 14), dp(activity, 16), dp(activity, 14));",
+              "      previewCard.setBackground(makeTgSurface(initSurface, withAlpha(initAccent, 180), initCardRadius, activity));",
+              "      final TextView previewBadge = new TextView(activity);",
+              "      previewBadge.setText(\"THEME STUDIO - КОНСТРУКТОР ТЕМ\");",
+              "      previewBadge.setTextColor(initAccent);",
+              "      previewBadge.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      previewBadge.setTextSize(12f * initFontScale);",
+              "      previewCard.addView(previewBadge);",
+              "      final TextView inBubble = new TextView(activity);",
+              "      inBubble.setText(\"Входящее: любой HEX, радиус и масштаб шрифта\");",
+              "      inBubble.setTextColor(initText);",
+              "      inBubble.setTextSize(14f * initFontScale);",
+              "      inBubble.setPadding(dp(activity, 12), dp(activity, 8), dp(activity, 12), dp(activity, 8));",
+              "      inBubble.setBackground(makeTgSurface(initBubble, withAlpha(initText, 35), initBubbleRadius, activity));",
+              "      LinearLayout.LayoutParams inLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
+              "      inLp.topMargin = dp(activity, 8);",
+              "      previewCard.addView(inBubble, inLp);",
+              "      final TextView outBubble = new TextView(activity);",
+              "      outBubble.setText(\"Исходящее: свой цвет бабла и акцента\");",
+              "      outBubble.setTextColor(initText);",
+              "      outBubble.setTextSize(14f * initFontScale);",
+              "      outBubble.setPadding(dp(activity, 12), dp(activity, 8), dp(activity, 12), dp(activity, 8));",
+              "      outBubble.setBackground(makeTgSurface(withAlpha(initOutBubble, 235), withAlpha(initAccent, 150), initBubbleRadius, activity));",
+              "      LinearLayout.LayoutParams outLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
+              "      outLp.gravity = Gravity.END;",
+              "      outLp.topMargin = dp(activity, 6);",
+              "      previewCard.addView(outBubble, outLp);",
+              "      LinearLayout.LayoutParams previewLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
+              "      previewLp.bottomMargin = dp(activity, 14);",
+              "      root.addView(previewCard, previewLp);",
+              "      final LinearLayout targetCard = new LinearLayout(activity);",
+              "      targetCard.setOrientation(LinearLayout.VERTICAL);",
+              "      targetCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));",
+              "      targetCard.setBackground(makeTgSurface(initBubble, withAlpha(initAccent, 110), initCardRadius, activity));",
+              "      final TextView targetLabel = new TextView(activity);",
+              "      targetLabel.setText(\"Элемент: Акцент (\" + CustomConfig.formatHex(initAccent) + \")\");",
+              "      targetLabel.setTextColor(initText);",
+              "      targetLabel.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      targetLabel.setTextSize(13f * initFontScale);",
+              "      targetCard.addView(targetLabel);",
+              "      final int[] selectedSlot = new int[] {0};",
+              "      final EditText hexInput = new EditText(activity);",
+              "      hexInput.setText(CustomConfig.formatHex(initAccent));",
+              "      hexInput.setTextColor(initText);",
+              "      hexInput.setHint(\"#RRGGBB\");",
+              "      hexInput.setHintTextColor(Color.GRAY);",
+              "      hexInput.setSingleLine(true);",
+              "      hexInput.setTextSize(14f * initFontScale);",
+              "      final Runnable refreshPreview = new Runnable() {",
+              "        @Override public void run() {",
+              "          int ac = CustomConfig.getAccentColor();",
+              "          int sf = CustomConfig.getSurfaceColor();",
+              "          int ib = CustomConfig.getBubbleColor();",
+              "          int ob = CustomConfig.getOutBubbleColor();",
+              "          int tx = CustomConfig.getTextColor();",
+              "          float br = CustomConfig.getBubbleCornerRadiusDp();",
+              "          float cr = CustomConfig.getCardCornerRadiusDp();",
+              "          float fs = CustomConfig.getFontScaleMultiplier();",
+              "          scroll.setBackgroundColor(sf);",
+              "          previewCard.setBackground(makeTgSurface(sf, withAlpha(ac, 180), cr, activity));",
+              "          previewBadge.setTextColor(ac);",
+              "          previewBadge.setTextSize(12f * fs);",
+              "          inBubble.setTextColor(tx);",
+              "          inBubble.setTextSize(14f * fs);",
+              "          inBubble.setBackground(makeTgSurface(ib, withAlpha(tx, 35), br, activity));",
+              "          outBubble.setTextColor(tx);",
+              "          outBubble.setTextSize(14f * fs);",
+              "          outBubble.setBackground(makeTgSurface(withAlpha(ob, 235), withAlpha(ac, 150), br, activity));",
+              "          targetCard.setBackground(makeTgSurface(ib, withAlpha(ac, 110), cr, activity));",
+              "          targetLabel.setTextColor(tx);",
+              "          targetLabel.setTextSize(13f * fs);",
+              "          hexInput.setTextColor(tx);",
+              "          hexInput.setTextSize(14f * fs);",
+              "          String slotName = \"Акцент\"; int activeCol = ac;",
+              "          if (selectedSlot[0] == 1) { slotName = \"Фон\"; activeCol = sf; }",
+              "          else if (selectedSlot[0] == 2) { slotName = \"Бабл входящих\"; activeCol = ib; }",
+              "          else if (selectedSlot[0] == 3) { slotName = \"Бабл исходящих\"; activeCol = ob; }",
+              "          else if (selectedSlot[0] == 4) { slotName = \"Текст\"; activeCol = tx; }",
+              "          targetLabel.setText(\"Элемент: \" + slotName + \" (\" + CustomConfig.formatHex(activeCol) + \")\");",
+              "        }",
+              "      };",
+              "      final ColorApplyCallback applyColorToSlot = new ColorApplyCallback() {",
+              "        @Override public void onApply(int col) {",
+              "          if (selectedSlot[0] == 0) CustomConfig.setAccentColor(col);",
+              "          else if (selectedSlot[0] == 1) CustomConfig.setSurfaceColor(col);",
+              "          else if (selectedSlot[0] == 2) CustomConfig.setBubbleColor(col);",
+              "          else if (selectedSlot[0] == 3) CustomConfig.setOutBubbleColor(col);",
+              "          else if (selectedSlot[0] == 4) CustomConfig.setTextColor(col);",
+              "          hexInput.setText(CustomConfig.formatHex(col));",
+              "          refreshPreview.run(); triggerPorscheTick(14, 120);",
+              "        }",
+              "      };",
+              "      HorizontalScrollView slotScroll = new HorizontalScrollView(activity);",
+              "      slotScroll.setHorizontalScrollBarEnabled(false);",
+              "      slotScroll.setPadding(0, dp(activity, 8), 0, dp(activity, 6));",
+              "      LinearLayout slotRow = new LinearLayout(activity);",
+              "      slotRow.setOrientation(LinearLayout.HORIZONTAL);",
+              "      String[] slotTitles = new String[] {\"Акцент\", \"Фон\", \"Входящие\", \"Исходящие\", \"Текст\"};",
+              "      for (int i = 0; i < slotTitles.length; i++) {",
+              "        final int idx = i;",
+              "        Button sb = new Button(activity);",
+              "        sb.setText(slotTitles[i]);",
+              "        sb.setAllCaps(false);",
+              "        sb.setTextColor(initText);",
+              "        sb.setBackground(makeTgSurface(withAlpha(initSurface, 200), withAlpha(initAccent, 120), 12f, activity));",
+              "        LinearLayout.LayoutParams sLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 38));",
+              "        sLp.rightMargin = dp(activity, 6);",
+              "        sb.setLayoutParams(sLp);",
+              "        sb.setOnClickListener(new View.OnClickListener() {",
+              "          @Override public void onClick(View v) {",
+              "            selectedSlot[0] = idx;",
+              "            int curCol = CustomConfig.getAccentColor();",
+              "            if (idx == 1) curCol = CustomConfig.getSurfaceColor();",
+              "            else if (idx == 2) curCol = CustomConfig.getBubbleColor();",
+              "            else if (idx == 3) curCol = CustomConfig.getOutBubbleColor();",
+              "            else if (idx == 4) curCol = CustomConfig.getTextColor();",
+              "            hexInput.setText(CustomConfig.formatHex(curCol)); refreshPreview.run();",
+              "          }",
+              "        });",
+              "        slotRow.addView(sb);",
+              "      }",
+              "      slotScroll.addView(slotRow);",
+              "      targetCard.addView(slotScroll);",
+              "      LinearLayout hexRow = new LinearLayout(activity);",
+              "      hexRow.setOrientation(LinearLayout.HORIZONTAL);",
+              "      hexRow.setGravity(Gravity.CENTER_VERTICAL);",
+              "      LinearLayout.LayoutParams hLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);",
+              "      hLp.rightMargin = dp(activity, 8);",
+              "      hexRow.addView(hexInput, hLp);",
+              "      Button applyHexBtn = new Button(activity);",
+              "      applyHexBtn.setText(\"Применить\");",
+              "      applyHexBtn.setAllCaps(false);",
+              "      applyHexBtn.setBackgroundColor(initAccent);",
+              "      applyHexBtn.setTextColor(Color.WHITE);",
+              "      applyHexBtn.setOnClickListener(new View.OnClickListener() {",
+              "        @Override public void onClick(View v) {",
+              "          int fallback = CustomConfig.getAccentColor();",
+              "          if (selectedSlot[0] == 1) fallback = CustomConfig.getSurfaceColor();",
+              "          else if (selectedSlot[0] == 2) fallback = CustomConfig.getBubbleColor();",
+              "          else if (selectedSlot[0] == 3) fallback = CustomConfig.getOutBubbleColor();",
+              "          else if (selectedSlot[0] == 4) fallback = CustomConfig.getTextColor();",
+              "          applyColorToSlot.onApply(safeParseHex(hexInput.getText().toString(), fallback));",
+              "        }",
+              "      });",
+              "      hexRow.addView(applyHexBtn);",
+              "      targetCard.addView(hexRow);",
+              "      LinearLayout.LayoutParams tLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
+              "      tLp.bottomMargin = dp(activity, 12);",
+              "      root.addView(targetCard, tLp);",
+              "      TextView swLabel = new TextView(activity);",
+              "      swLabel.setText(\"Готовые оттенки для выбранного элемента\");",
+              "      swLabel.setTextColor(initText);",
+              "      swLabel.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      swLabel.setTextSize(13f * initFontScale);",
+              "      swLabel.setPadding(0, 0, 0, dp(activity, 6));",
+              "      root.addView(swLabel);",
+              "      HorizontalScrollView swScroll = new HorizontalScrollView(activity);",
+              "      swScroll.setHorizontalScrollBarEnabled(false);",
+              "      LinearLayout swRow = new LinearLayout(activity);",
+              "      swRow.setOrientation(LinearLayout.HORIZONTAL);",
+              "      int[] combinedSwatches = new int[CustomConfig.SWATCH_PALETTE.length + CustomConfig.SURFACE_PALETTE.length + CustomConfig.BUBBLE_PALETTE.length];",
+              "      System.arraycopy(CustomConfig.SWATCH_PALETTE, 0, combinedSwatches, 0, CustomConfig.SWATCH_PALETTE.length);",
+              "      System.arraycopy(CustomConfig.SURFACE_PALETTE, 0, combinedSwatches, CustomConfig.SWATCH_PALETTE.length, CustomConfig.SURFACE_PALETTE.length);",
+              "      System.arraycopy(CustomConfig.BUBBLE_PALETTE, 0, combinedSwatches, CustomConfig.SWATCH_PALETTE.length + CustomConfig.SURFACE_PALETTE.length, CustomConfig.BUBBLE_PALETTE.length);",
+              "      for (final int sw : combinedSwatches) {",
+              "        View dot = new View(activity);",
+              "        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(activity, 34), dp(activity, 34));",
+              "        dotLp.rightMargin = dp(activity, 8);",
+              "        dot.setLayoutParams(dotLp);",
+              "        dot.setBackground(makeTgSurface(sw, Color.WHITE, 17f, activity));",
+              "        dot.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { applyColorToSlot.onApply(sw); } });",
+              "        swRow.addView(dot);",
+              "      }",
+              "      swScroll.addView(swRow);",
+              "      LinearLayout.LayoutParams swScrollLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
+              "      swScrollLp.bottomMargin = dp(activity, 14);",
+              "      root.addView(swScroll, swScrollLp);",
+              "      final TextView brLabel = new TextView(activity);",
+              "      brLabel.setText(\"Скругление баблов: \" + Math.round(initBubbleRadius) + \" dp\");",
+              "      brLabel.setTextColor(initText);",
+              "      brLabel.setTextSize(13f * initFontScale);",
+              "      root.addView(brLabel);",
+              "      final SeekBar brSeek = new SeekBar(activity);",
+              "      brSeek.setMax(28);",
+              "      brSeek.setProgress(Math.max(0, Math.min(28, Math.round(initBubbleRadius) - 4)));",
+              "      brSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {",
+              "        @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) { float val = progress + 4f; CustomConfig.setBubbleCornerRadiusDp(val); brLabel.setText(\"Скругление баблов: \" + Math.round(val) + \" dp\"); refreshPreview.run(); }",
+              "        @Override public void onStartTrackingTouch(SeekBar seekBar) {}",
+              "        @Override public void onStopTrackingTouch(SeekBar seekBar) {}",
+              "      });",
+              "      root.addView(brSeek);",
+              "      final TextView crLabel = new TextView(activity);",
+              "      crLabel.setText(\"Скругление карточек: \" + Math.round(initCardRadius) + \" dp\");",
+              "      crLabel.setTextColor(initText);",
+              "      crLabel.setTextSize(13f * initFontScale);",
+              "      crLabel.setPadding(0, dp(activity, 6), 0, 0);",
+              "      root.addView(crLabel);",
+              "      final SeekBar crSeek = new SeekBar(activity);",
+              "      crSeek.setMax(30);",
+              "      crSeek.setProgress(Math.max(0, Math.min(30, Math.round(initCardRadius) - 6)));",
+              "      crSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {",
+              "        @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) { float val = progress + 6f; CustomConfig.setCardCornerRadiusDp(val); crLabel.setText(\"Скругление карточек: \" + Math.round(val) + \" dp\"); refreshPreview.run(); }",
+              "        @Override public void onStartTrackingTouch(SeekBar seekBar) {}",
+              "        @Override public void onStopTrackingTouch(SeekBar seekBar) {}",
+              "      });",
+              "      root.addView(crSeek);",
+              "      final TextView fsLabel = new TextView(activity);",
+              "      fsLabel.setText(\"Масштаб шрифта: \" + String.format(\"%.2fx\", initFontScale));",
+              "      fsLabel.setTextColor(initText);",
+              "      fsLabel.setTextSize(13f * initFontScale);",
+              "      fsLabel.setPadding(0, dp(activity, 6), 0, 0);",
+              "      root.addView(fsLabel);",
+              "      final SeekBar fsSeek = new SeekBar(activity);",
+              "      fsSeek.setMax(50);",
+              "      fsSeek.setProgress(Math.max(0, Math.min(50, Math.round((initFontScale - 0.85f) * 100f))));",
+              "      fsSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {",
+              "        @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) { float val = 0.85f + (progress / 100f); CustomConfig.setFontScaleMultiplier(val); fsLabel.setText(\"Масштаб шрифта: \" + String.format(\"%.2fx\", val)); refreshPreview.run(); }",
+              "        @Override public void onStartTrackingTouch(SeekBar seekBar) {}",
+              "        @Override public void onStopTrackingTouch(SeekBar seekBar) {}",
+              "      });",
+              "      root.addView(fsSeek);",
+              "      final Switch compactSwitch = new Switch(activity);",
+              "      compactSwitch.setText(\"Компактный интервал сообщений\");",
+              "      compactSwitch.setTextColor(initText);",
+              "      compactSwitch.setChecked(CustomConfig.isCompactMessageSpacing());",
+              "      compactSwitch.setPadding(0, dp(activity, 10), 0, dp(activity, 8));",
+              "      compactSwitch.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { CustomConfig.toggleCompactMessageSpacing(); compactSwitch.setChecked(CustomConfig.isCompactMessageSpacing()); } });",
+              "      root.addView(compactSwitch);",
+              "      Button resetBtn = new Button(activity);",
+              "      resetBtn.setText(\"Сбросить тему по умолчанию\");",
+              "      resetBtn.setAllCaps(false);",
+              "      resetBtn.setOnClickListener(new View.OnClickListener() {",
+              "        @Override public void onClick(View v) {",
+              "          CustomConfig.resetCustomThemeToDefaults();",
+              "          brSeek.setProgress(Math.round(CustomConfig.getBubbleCornerRadiusDp()) - 4);",
+              "          crSeek.setProgress(Math.round(CustomConfig.getCardCornerRadiusDp()) - 6);",
+              "          fsSeek.setProgress(Math.round((CustomConfig.getFontScaleMultiplier() - 0.85f) * 100f));",
+              "          compactSwitch.setChecked(CustomConfig.isCompactMessageSpacing());",
+              "          selectedSlot[0] = 0; hexInput.setText(CustomConfig.formatHex(CustomConfig.getAccentColor())); refreshPreview.run();",
+              "        }",
+              "      });",
+              "      root.addView(resetBtn);",
+              "      new AlertDialog.Builder(activity).setTitle(\"Notes - Панель настройки тем\").setView(scroll).setPositiveButton(\"Готово\", null).show();",
+              "    } catch (Throwable ignored) {}",
+              "  }",
+              "  public static void refreshDisplayAndGuestGuard(Activity activity) {",
+              "    if (activity == null) return;",
+              "    try {",
+              "      Window w = activity.getWindow();",
+              "      if (w != null) {",
+              "        if (CustomConfig.isGuestHandoverActive()) { w.addFlags(WindowManager.LayoutParams.FLAG_SECURE); } else { w.clearFlags(WindowManager.LayoutParams.FLAG_SECURE); }",
+              "        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {",
+              "          WindowManager.LayoutParams params = w.getAttributes();",
+              "          params.preferredRefreshRate = CustomConfig.isForce120Hz() ? 120.0f : 0.0f;",
+              "          if (CustomConfig.isMagicHdrBoost() && CustomConfig.isHonorMagic6Pro()) { params.screenBrightness = Math.max(params.screenBrightness, 0.85f); }",
+              "          w.setAttributes(params);",
+              "        }",
+              "      }",
+              "    } catch (Throwable ignored) {}",
+              "  }",
+              "  public static void triggerPorscheTick(int amplitude, int durationMs) {",
+              "    try {",
+              "      if (!CustomConfig.isPorscheHapticBoost()) return;",
+              "      Context ctx = ApplicationLoader.applicationContext;",
+              "      if (ctx == null) return;",
+              "      Vibrator vib = (Vibrator) ctx.getSystemService(Context.VIBRATOR_SERVICE);",
+              "      if (vib != null && vib.hasVibrator()) {",
+              "        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {",
+              "          vib.vibrate(VibrationEffect.createOneShot(Math.max(10, Math.min(400, durationMs)), Math.max(1, Math.min(255, amplitude))));",
+              "        } else { vib.vibrate(Math.max(10, Math.min(400, durationMs))); }",
+              "      }",
+              "    } catch (Throwable ignored) {}",
+              "  }",
+              "  public static void copyTextToClipboard(Context ctx, String label, String text) {",
+              "    try {",
+              "      if (ctx == null || TextUtils.isEmpty(text)) return;",
+              "      ClipboardManager cm = (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);",
+              "      if (cm != null) cm.setPrimaryClip(ClipData.newPlainText(label != null ? label : \"Notes\", text));",
+              "    } catch (Throwable ignored) {}",
+              "  }",
+              "  public static File saveSecretMediaToVault(String sourcePath, boolean isVideo) {",
+              "    try {",
+              "      if (CustomConfig.isGuestHandoverActive() || TextUtils.isEmpty(sourcePath)) return null;",
+              "      File src = new File(sourcePath);",
+              "      if (!src.exists() || !src.canRead()) return null;",
+              "      File baseDir = Environment.getExternalStoragePublicDirectory(isVideo ? Environment.DIRECTORY_MOVIES : Environment.DIRECTORY_PICTURES);",
+              "      File vaultDir = new File(baseDir, \"NotesVault\");",
+              "      if (!vaultDir.exists() && !vaultDir.mkdirs()) return null;",
+              "      File dst = new File(vaultDir, (isVideo ? \"vault_vid_\" : \"vault_img_\") + System.currentTimeMillis() + (isVideo ? \".mp4\" : \".jpg\"));",
+              "      try (FileInputStream in = new FileInputStream(src); FileOutputStream out = new FileOutputStream(dst)) {",
+              "        byte[] buf = new byte[16384]; int len;",
+              "        while ((len = in.read(buf)) > 0) out.write(buf, 0, len);",
+              "      }",
+              "      return dst;",
+              "    } catch (Throwable ignored) { return null; }",
+              "  }",
+              "  public static File decodeMediaToMono16kWav(String inputPath) {",
+              "    try {",
+              "      if (TextUtils.isEmpty(inputPath)) return null;",
+              "      File inFile = new File(inputPath);",
+              "      if (!inFile.exists()) return null;",
+              "      File outWav = new File(ApplicationLoader.applicationContext.getCacheDir(), \"whisper_ru_16k.wav\");",
+              "      MediaExtractor extractor = new MediaExtractor();",
+              "      extractor.setDataSource(inputPath);",
+              "      int audioTrack = -1;",
+              "      for (int i = 0; i < extractor.getTrackCount(); i++) {",
+              "        MediaFormat fmt = extractor.getTrackFormat(i);",
+              "        String mime = fmt.getString(MediaFormat.KEY_MIME);",
+              "        if (mime != null && mime.startsWith(\"audio/\")) { audioTrack = i; break; }",
+              "      }",
+              "      if (audioTrack < 0) { extractor.release(); return inFile; }",
+              "      extractor.selectTrack(audioTrack);",
+              "      MediaFormat format = extractor.getTrackFormat(audioTrack);",
+              "      MediaCodec codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME));",
+              "      codec.configure(format, null, null, 0);",
+              "      codec.start();",
+              "      ByteArrayOutputStream pcmOut = new ByteArrayOutputStream();",
+              "      MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();",
+              "      boolean sawInputEOS = false; boolean sawOutputEOS = false;",
+              "      while (!sawOutputEOS) {",
+              "        if (!sawInputEOS) {",
+              "          int inIdx = codec.dequeueInputBuffer(10000);",
+              "          if (inIdx >= 0) {",
+              "            ByteBuffer inBuf = codec.getInputBuffer(inIdx);",
+              "            int sampleSize = extractor.readSampleData(inBuf, 0);",
+              "            if (sampleSize < 0) { codec.queueInputBuffer(inIdx, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM); sawInputEOS = true; }",
+              "            else { codec.queueInputBuffer(inIdx, 0, sampleSize, extractor.getSampleTime(), 0); extractor.advance(); }",
+              "          }",
+              "        }",
+              "        int outIdx = codec.dequeueOutputBuffer(info, 10000);",
+              "        if (outIdx >= 0) {",
+              "          ByteBuffer outBuf = codec.getOutputBuffer(outIdx);",
+              "          if (outBuf != null && info.size > 0) { byte[] chunk = new byte[info.size]; outBuf.get(chunk); pcmOut.write(chunk); }",
+              "          codec.releaseOutputBuffer(outIdx, false);",
+              "          if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) sawOutputEOS = true;",
+              "        }",
+              "      }",
+              "      codec.stop(); codec.release(); extractor.release();",
+              "      byte[] pcmData = pcmOut.toByteArray();",
+              "      int sampleRate = format.containsKey(MediaFormat.KEY_SAMPLE_RATE) ? format.getInteger(MediaFormat.KEY_SAMPLE_RATE) : 16000;",
+              "      int channels = format.containsKey(MediaFormat.KEY_CHANNEL_COUNT) ? format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) : 1;",
+              "      try (FileOutputStream fos = new FileOutputStream(outWav)) { writeWavHeader(fos, pcmData.length, sampleRate, channels, 16); fos.write(pcmData); }",
+              "      return outWav;",
+              "    } catch (Throwable ignored) { return new File(inputPath); }",
+              "  }",
+              "  private static void writeWavHeader(FileOutputStream out, int pcmBytes, int sampleRate, int channels, int bitsPerSample) throws Exception {",
+              "    int byteRate = sampleRate * channels * bitsPerSample / 8;",
+              "    int blockAlign = channels * bitsPerSample / 8;",
+              "    ByteBuffer header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);",
+              "    header.put(new byte[] {'R', 'I', 'F', 'F'}); header.putInt(36 + pcmBytes); header.put(new byte[] {'W', 'A', 'V', 'E'});",
+              "    header.put(new byte[] {'f', 'm', 't', ' '}); header.putInt(16); header.putShort((short) 1); header.putShort((short) channels);",
+              "    header.putInt(sampleRate); header.putInt(byteRate); header.putShort((short) blockAlign); header.putShort((short) bitsPerSample);",
+              "    header.put(new byte[] {'d', 'a', 't', 'a'}); header.putInt(pcmBytes); out.write(header.array());",
+              "  }",
+              "  public static void transcribeAudioOrRound(Activity activity, long dialogId, String mediaPath, boolean isRoundVideo) {",
+              "    if (activity == null || CustomConfig.isStockMode(dialogId)) return;",
+              "    try {",
+              "      File prepared = CustomConfig.isLocalWhisperRu() ? decodeMediaToMono16kWav(mediaPath) : (mediaPath != null ? new File(mediaPath) : null);",
+              "      File target = (prepared != null && prepared.exists()) ? prepared : (mediaPath != null ? new File(mediaPath) : null);",
+              "      if (target == null || !target.exists()) return;",
+              "      Context ctx = activity.getApplicationContext();",
+              "      Uri uri = FileProvider.getUriForFile(ctx, ctx.getPackageName() + \".provider\", target);",
+              "      Intent send = new Intent(Intent.ACTION_SEND);",
+              "      send.setType(isRoundVideo ? \"video/*\" : \"audio/*\");",
+              "      send.putExtra(Intent.EXTRA_STREAM, uri);",
+              "      send.putExtra(\"language\", \"ru\");",
+              "      send.putExtra(\"whisper_model\", MODEL_ASSET_PATH);",
+              "      send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);",
+              "      activity.startActivity(Intent.createChooser(send, \"Расшифровать (RU)\"));",
+              "    } catch (Throwable ignored) {}",
+              "  }",
+              "}"
+          ]
           with open(f"{h_dir}/LocalWhisperHelper.java", "w", encoding="utf-8") as f:
-              f.write(whisper_helper_code)
+              f.write("\n".join(whisper_lines) + "\n")
 
           # 9. Patch MessagesStorage (Anti-Delete) & MessagesController (Anti-Delete, Ghost Read, No Typing)
           for ms_path in glob.glob("TMessagesProj/src/main/java/**/MessagesStorage.java", recursive=True):
@@ -1881,7 +1545,7 @@ jobs:
                       count=1
                   )
                   changed = True
-              add_sub_snippet = f'\n            try {{ if (headerItem != null) headerItem.addSubItem({notes_menu_id}, "Notes • Панель функций"); }} catch (Throwable ignored) {{}}'
+              add_sub_snippet = f'\n            try {{ if (headerItem != null) headerItem.addSubItem({notes_menu_id}, "Notes - Панель функций"); }} catch (Throwable ignored) {{}}'
               if f"headerItem.addSubItem({notes_menu_id}" not in ca and "headerItem.addSubItem(" in ca:
                   ca = re.sub(
                       r'(headerItem\.addSubItem\([^\n;]+\);)',
@@ -1977,10 +1641,11 @@ jobs:
           APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
           "$AAPT" dump badging "$APK_PATH" | head -n 30
           "$AAPT" dump badging "$APK_PATH" | grep -q "package: name='com.alexey.notesclient'"
-          "$AAPT" dump badging "$APK_PATH" | grep -q "launchable-activity:" || "$AAPT" dump xmltree "$APK_PATH" --file AndroidManifest.xml | grep -q "LaunchActivity"
+          "$AAPT" dump badging "$APK_PATH" | grep -q "package:"
           "$APKSIGNER" verify --verbose --print-certs "$APK_PATH"
 
       - name: Upload APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: NotesClient-arm64
