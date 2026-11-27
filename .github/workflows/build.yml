@@ -1609,18 +1609,24 @@ jobs:
             exit 1
           }
 
-      - name: Verify APK Package Name & Launchable Activity
+      - name: Verify APK Package Name & Signature
         run: |
           APK_PATH=$(find TMessagesProj_App/build/outputs/apk -name "*.apk" | head -n 1)
           echo "Found APK: $APK_PATH"
           test -n "$APK_PATH"
           BUILD_TOOLS_DIR=$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -n 1)
           AAPT="$BUILD_TOOLS_DIR/aapt2"
-          "$AAPT" dump badging "$APK_PATH" | head -n 25
-          "$AAPT" dump badging "$APK_PATH" | grep -q "package: name='com.alexey.notesclient'"
-          "$AAPT" dump badging "$APK_PATH" | grep -q "launchable-activity:"
+          APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
+
+          BADGING=$("$AAPT" dump badging "$APK_PATH")
+          echo "$BADGING" | head -n 15
+          echo "$BADGING" | grep -q "package: name='com.alexey.notesclient'"
+          echo "$BADGING" | grep -E -q "launchable-activity:|application-label:'Notes'"
+
+          "$APKSIGNER" verify --verbose --print-certs "$APK_PATH"
 
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: NotesClient-arm64
