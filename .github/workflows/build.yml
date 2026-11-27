@@ -1524,10 +1524,10 @@ jobs:
                       ms = f.read()
               except Exception:
                   continue
-              if "CustomConfig.markDeletedLocally" not in ms:
+              if "org.telegram.messenger.CustomConfig.markDeletedLocally" not in ms:
                   ms = re.sub(
                       r'(public\s+void\s+markMessagesAsDeleted\s*\([^)]*\)\s*\{)',
-                      r'\1\n        try {\n            CustomConfig.markDeletedLocally(0L, 0);\n        } catch (Throwable ignored) {}',
+                      r'\1\n        try {\n            org.telegram.messenger.CustomConfig.markDeletedLocally(0L, 0);\n        } catch (Throwable ignored) {}',
                       ms,
                       count=1
                   )
@@ -1540,22 +1540,22 @@ jobs:
                       mc = f.read()
               except Exception:
                   continue
-              if "CustomConfig.isGuestHandoverActive()" not in mc:
+              if "org.telegram.messenger.CustomConfig.isGuestHandoverActive()" not in mc:
                   mc = re.sub(
                       r'(public\s+void\s+deleteMessages\s*\([^)]*\)\s*\{)',
-                      r'\1\n        if (CustomConfig.isGuestHandoverActive()) return;',
+                      r'\1\n        if (org.telegram.messenger.CustomConfig.isGuestHandoverActive()) return;',
                       mc,
                       count=1
                   )
                   mc = re.sub(
-                      r'(public\s+void\s+sendTyping\s*\([^)]*\)\s*\{)',
-                      r'\1\n        if (CustomConfig.isNoTyping(dialogId)) return;',
+                      r'(public\s+void\s+sendTyping\s*\(\s*(?:final\s+)?long\s+([a-zA-Z0-9_]+)[^)]*\)\s*\{)',
+                      r'\1\n        if (org.telegram.messenger.CustomConfig.isNoTyping(\2)) return;',
                       mc,
                       count=1
                   )
                   mc = re.sub(
-                      r'(public\s+void\s+markDialogAsRead\s*\([^)]*\)\s*\{)',
-                      r'\1\n        if (CustomConfig.isGhostRead(dialog_id)) return;',
+                      r'(public\s+void\s+markDialogAsRead\s*\(\s*(?:final\s+)?long\s+([a-zA-Z0-9_]+)[^)]*\)\s*\{)',
+                      r'\1\n        if (org.telegram.messenger.CustomConfig.isGhostRead(\2)) return;',
                       mc,
                       count=1
                   )
@@ -1569,10 +1569,10 @@ jobs:
                       ca = f.read()
               except Exception:
                   continue
-              if "LocalWhisperHelper.openThemeStudioPanel" not in ca:
+              if "org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard" not in ca:
                   ca = re.sub(
                       r'(public\s+boolean\s+onFragmentCreate\s*\(\s*\)\s*\{)',
-                      r'\1\n        try { LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity()); } catch (Throwable ignored) {}',
+                      r'\1\n        try { org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity()); } catch (Throwable ignored) {}',
                       ca,
                       count=1
                   )
@@ -1586,10 +1586,10 @@ jobs:
                       sm = f.read()
               except Exception:
                   continue
-              if "LocalWhisperHelper.saveSecretMediaToVault" not in sm:
+              if "org.telegram.messenger.LocalWhisperHelper.saveSecretMediaToVault" not in sm:
                   sm = re.sub(
                       r'(private\s+void\s+setCurrentImage\s*\([^)]*\)\s*\{)',
-                      r'\1\n        try { if (!CustomConfig.isGuestHandoverActive()) LocalWhisperHelper.saveSecretMediaToVault(null, false); } catch (Throwable ignored) {}',
+                      r'\1\n        try { if (!org.telegram.messenger.CustomConfig.isGuestHandoverActive()) org.telegram.messenger.LocalWhisperHelper.saveSecretMediaToVault(null, false); } catch (Throwable ignored) {}',
                       sm,
                       count=1
                   )
