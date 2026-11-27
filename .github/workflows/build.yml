@@ -7,10 +7,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Free Up Disk Space on Runner
+      - name: Free Up Disk Space & Speed Up Runner
         run: |
           df -h
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk/* /opt/ghc /usr/local/.ghcup || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk/* /opt/ghc /usr/local/.ghcup /usr/local/share/powershell /usr/local/lib/node_modules || true
           df -h
 
       - name: Checkout code
@@ -99,7 +99,7 @@ jobs:
                   print(f"Warning: Could not pre-download Whisper model during build ({e}). Will fallback to external transcribe intent if model asset is absent.")
           EOF
 
-      - name: Apply Stealth, Anti-Delete, Secret Media, Local RU Whisper, Local Premium, Guest Mode & Custom Theme Studio Patches
+      - name: Apply Stealth, Anti-Delete, Secret Media, Local RU Whisper, Local Premium, Guest Mode & Telegram-Style Notes Hub Patches
         env:
           RAW_API_ID: ${{ secrets.TG_API_ID }}
           RAW_API_HASH: ${{ secrets.TG_API_HASH }}
@@ -332,6 +332,7 @@ jobs:
               private static final Map<String, String> editedHistory = Collections.synchronizedMap(new HashMap<>());
 
               public static final int[] SWATCH_PALETTE = new int[] {
+                  0xFF3390EC, // Telegram Classic Blue
                   0xFFE11D48, // Porsche Crimson
                   0xFF38BDF8, // Magic Titanium Cyan
                   0xFF10B981, // Emerald GT
@@ -340,26 +341,25 @@ jobs:
                   0xFFEC4899, // Neon Rose
                   0xFF6366F1, // Cobalt Pulse
                   0xFFF97316, // Supercar Tangerine
-                  0xFFE5E7EB, // Silver Carbon
                   0xFF14B8A6  // Teal Matrix
               };
 
               public static final int[] SURFACE_PALETTE = new int[] {
-                  0xFF0B0B0E, // Deep Obsidian
-                  0xFF000000, // Pure AMOLED Black
-                  0xFF12161F, // Magic Slate Navy
+                  0xFF18222D, // Telegram Dark Slate
+                  0xFF0F161E, // Telegram Deep Night
+                  0xFF000000, // Pure AMOLED
                   0xFF161213, // Porsche Carbon Wine
                   0xFF101815, // Dark Forest Glass
                   0xFF181520  // Midnight Plum
               };
 
               public static final int[] BUBBLE_PALETTE = new int[] {
-                  0xFF1D1E26, // Smoked Graphite
+                  0xFF212D3B, // Telegram Incoming Dark
+                  0xFF2B5278, // Telegram Outgoing Blue
                   0xFF1E293B, // Slate Glass
                   0xFF2A1419, // Crimson Shadow
                   0xFF112622, // Emerald Shadow
-                  0xFF1F192E, // Violet Shadow
-                  0xFF262014  // Gold Shadow
+                  0xFF1F192E  // Violet Shadow
               };
 
               private static SharedPreferences getPrefs() {
@@ -374,7 +374,6 @@ jobs:
                   return deletedIds;
               }
 
-              // --- Per-Dialog Stock Mode ---
               public static boolean isStockMode(long dialogId) {
                   return getPrefs().getBoolean("stock_" + dialogId, false);
               }
@@ -383,7 +382,6 @@ jobs:
                   getPrefs().edit().putBoolean("stock_" + dialogId, !isStockMode(dialogId)).apply();
               }
 
-              // --- Stealth Modes ---
               public static boolean isGhostRead(long dialogId) {
                   if (isStockMode(dialogId) || isGuestHandoverActive()) return false;
                   return getPrefs().getBoolean("ghost_read", false);
@@ -402,7 +400,6 @@ jobs:
                   getPrefs().edit().putBoolean("no_typing", !getPrefs().getBoolean("no_typing", false)).apply();
               }
 
-              // --- Local Telegram Premium Suite ---
               public static boolean isLocalPremiumEnabled() {
                   return getPrefs().getBoolean("local_premium_enabled", true);
               }
@@ -421,7 +418,6 @@ jobs:
                   return next;
               }
 
-              // --- 5-Minute Guest / Handover Security Guard ---
               public static void armGuestHandoverTimer(int minutes) {
                   int safeMinutes = Math.max(1, Math.min(60, minutes));
                   long until = System.currentTimeMillis() + safeMinutes * 60_000L;
@@ -454,7 +450,6 @@ jobs:
                   return Math.max(0L, rem);
               }
 
-              // --- Advanced Media Sending Settings ---
               public static int getPhotoSendQuality() {
                   return getPrefs().getInt("media_photo_quality", 1);
               }
@@ -511,9 +506,8 @@ jobs:
                   getPrefs().edit().putInt("media_spoiler_mode", Math.max(0, Math.min(2, mode))).apply();
               }
 
-              // --- Custom Theme Studio (Full User Customization) ---
               public static int getAccentColor() {
-                  return getPrefs().getInt("custom_accent_color", 0xFFE11D48);
+                  return getPrefs().getInt("custom_accent_color", 0xFF3390EC);
               }
 
               public static void setAccentColor(int color) {
@@ -521,7 +515,7 @@ jobs:
               }
 
               public static int getSurfaceColor() {
-                  return getPrefs().getInt("custom_surface_color", 0xFF0B0B0E);
+                  return getPrefs().getInt("custom_surface_color", 0xFF18222D);
               }
 
               public static void setSurfaceColor(int color) {
@@ -529,7 +523,7 @@ jobs:
               }
 
               public static int getBubbleColor() {
-                  return getPrefs().getInt("custom_bubble_color", 0xFF1D1E26);
+                  return getPrefs().getInt("custom_bubble_color", 0xFF212D3B);
               }
 
               public static void setBubbleColor(int color) {
@@ -537,7 +531,7 @@ jobs:
               }
 
               public static int getOutBubbleColor() {
-                  return getPrefs().getInt("custom_out_bubble_color", 0xFF2B131A);
+                  return getPrefs().getInt("custom_out_bubble_color", 0xFF2B5278);
               }
 
               public static void setOutBubbleColor(int color) {
@@ -545,7 +539,7 @@ jobs:
               }
 
               public static int getTextColor() {
-                  return getPrefs().getInt("custom_text_color", 0xFFF8FAFC);
+                  return getPrefs().getInt("custom_text_color", 0xFFFFFFFF);
               }
 
               public static void setTextColor(int color) {
@@ -553,7 +547,7 @@ jobs:
               }
 
               public static float getBubbleCornerRadiusDp() {
-                  return getPrefs().getFloat("bubble_corner_dp", 20.0f);
+                  return getPrefs().getFloat("bubble_corner_dp", 18.0f);
               }
 
               public static void setBubbleCornerRadiusDp(float dp) {
@@ -562,7 +556,7 @@ jobs:
               }
 
               public static float getCardCornerRadiusDp() {
-                  return getPrefs().getFloat("card_corner_dp", 22.0f);
+                  return getPrefs().getFloat("card_corner_dp", 16.0f);
               }
 
               public static void setCardCornerRadiusDp(float dp) {
@@ -597,13 +591,13 @@ jobs:
 
               public static void resetCustomThemeToDefaults() {
                   getPrefs().edit()
-                      .putInt("custom_accent_color", 0xFFE11D48)
-                      .putInt("custom_surface_color", 0xFF0B0B0E)
-                      .putInt("custom_bubble_color", 0xFF1D1E26)
-                      .putInt("custom_out_bubble_color", 0xFF2B131A)
-                      .putInt("custom_text_color", 0xFFF8FAFC)
-                      .putFloat("bubble_corner_dp", 20.0f)
-                      .putFloat("card_corner_dp", 22.0f)
+                      .putInt("custom_accent_color", 0xFF3390EC)
+                      .putInt("custom_surface_color", 0xFF18222D)
+                      .putInt("custom_bubble_color", 0xFF212D3B)
+                      .putInt("custom_out_bubble_color", 0xFF2B5278)
+                      .putInt("custom_text_color", 0xFFFFFFFF)
+                      .putFloat("bubble_corner_dp", 18.0f)
+                      .putFloat("card_corner_dp", 16.0f)
                       .putFloat("font_scale_mult", 1.0f)
                       .putBoolean("compact_msg_spacing", false)
                       .putBoolean("glass_blur_cards", true)
@@ -688,7 +682,7 @@ jobs:
           with open(f"{h_dir}/CustomConfig.java", "w", encoding="utf-8") as f:
               f.write(custom_cfg_code)
 
-          # 8. LocalWhisperHelper: Theme Studio, Media Send Options Panel, Local RU Whisper, Guest Guard & Vault
+          # 8. LocalWhisperHelper: Telegram-native Notes Hub, Guide ("Where to find everything"), Theme Studio & Media Send
           whisper_helper_code = """package org.telegram.messenger;
 
           import android.app.Activity;
@@ -733,6 +727,13 @@ jobs:
           public class LocalWhisperHelper {
               private static final String MODEL_ASSET_PATH = "whisper/ggml-small-q5_1.bin";
 
+              private static final int TG_BLUE = 0xFF3390EC;
+              private static final int TG_DARK_BG = 0xFF18222D;
+              private static final int TG_DARK_CELL = 0xFF212D3B;
+              private static final int TG_DARK_DIVIDER = 0xFF10161D;
+              private static final int TG_TEXT_MAIN = 0xFFFFFFFF;
+              private static final int TG_TEXT_SUB = 0xFF8A9BA8;
+
               private interface ColorApplyCallback {
                   void onApply(int color);
               }
@@ -746,13 +747,95 @@ jobs:
                   return Color.argb(Math.max(0, Math.min(255, alpha)), Color.red(color), Color.green(color), Color.blue(color));
               }
 
-              private static GradientDrawable makeCardDrawable(int bgColor, int strokeColor, float radiusDp, Context ctx) {
+              private static GradientDrawable makeTgSurface(int bgColor, int strokeColor, float radiusDp, Context ctx) {
                   GradientDrawable gd = new GradientDrawable();
                   gd.setShape(GradientDrawable.RECTANGLE);
                   gd.setColor(bgColor);
                   gd.setCornerRadius(dp(ctx, radiusDp));
-                  gd.setStroke(dp(ctx, 1.3f), strokeColor);
+                  if (strokeColor != Color.TRANSPARENT) {
+                      gd.setStroke(dp(ctx, 1f), strokeColor);
+                  }
                   return gd;
+              }
+
+              private static View makeSectionDivider(Context ctx) {
+                  View v = new View(ctx);
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                      ViewGroup.LayoutParams.MATCH_PARENT, dp(ctx, 10)
+                  );
+                  v.setLayoutParams(lp);
+                  v.setBackgroundColor(TG_DARK_DIVIDER);
+                  return v;
+              }
+
+              private static TextView makeSectionHeader(Context ctx, String title) {
+                  TextView tv = new TextView(ctx);
+                  tv.setText(title);
+                  tv.setTextColor(TG_BLUE);
+                  tv.setTypeface(Typeface.DEFAULT_BOLD);
+                  tv.setTextSize(13.5f);
+                  tv.setPadding(dp(ctx, 18), dp(ctx, 12), dp(ctx, 18), dp(ctx, 6));
+                  return tv;
+              }
+
+              private static LinearLayout makeTgRow(Context ctx, String title, String subtitle, String badgeRight, View.OnClickListener listener) {
+                  LinearLayout row = new LinearLayout(ctx);
+                  row.setOrientation(LinearLayout.HORIZONTAL);
+                  row.setGravity(Gravity.CENTER_VERTICAL);
+                  row.setPadding(dp(ctx, 18), dp(ctx, 11), dp(ctx, 18), dp(ctx, 11));
+                  row.setBackgroundColor(TG_DARK_CELL);
+                  if (listener != null) {
+                      row.setOnClickListener(listener);
+                  }
+
+                  LinearLayout textCol = new LinearLayout(ctx);
+                  textCol.setOrientation(LinearLayout.VERTICAL);
+                  LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(
+                      0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+                  );
+                  textLp.rightMargin = dp(ctx, 10);
+
+                  TextView titleTv = new TextView(ctx);
+                  titleTv.setText(title);
+                  titleTv.setTextColor(TG_TEXT_MAIN);
+                  titleTv.setTextSize(15.5f);
+                  textCol.addView(titleTv);
+
+                  if (!TextUtils.isEmpty(subtitle)) {
+                      TextView subTv = new TextView(ctx);
+                      subTv.setText(subtitle);
+                      subTv.setTextColor(TG_TEXT_SUB);
+                      subTv.setTextSize(13f);
+                      subTv.setPadding(0, dp(ctx, 2), 0, 0);
+                      textCol.addView(subTv);
+                  }
+
+                  row.addView(textCol, textLp);
+
+                  if (!TextUtils.isEmpty(badgeRight)) {
+                      TextView badgeTv = new TextView(ctx);
+                      badgeTv.setText(badgeRight);
+                      badgeTv.setTextColor(TG_BLUE);
+                      badgeTv.setTypeface(Typeface.DEFAULT_BOLD);
+                      badgeTv.setTextSize(13.5f);
+                      row.addView(badgeTv);
+                  }
+
+                  return row;
+              }
+
+              private static Switch makeTgSwitchRow(Context ctx, String title, String subtitle, boolean checked, View.OnClickListener onToggle) {
+                  Switch sw = new Switch(ctx);
+                  sw.setText(TextUtils.isEmpty(subtitle) ? title : (title + "\\n" + subtitle));
+                  sw.setTextColor(TG_TEXT_MAIN);
+                  sw.setTextSize(14.5f);
+                  sw.setChecked(checked);
+                  sw.setPadding(dp(ctx, 18), dp(ctx, 10), dp(ctx, 18), dp(ctx, 10));
+                  sw.setBackgroundColor(TG_DARK_CELL);
+                  if (onToggle != null) {
+                      sw.setOnClickListener(onToggle);
+                  }
+                  return sw;
               }
 
               private static int safeParseHex(String input, int fallback) {
@@ -764,6 +847,225 @@ jobs:
                   } catch (Throwable ignored) {
                       return fallback;
                   }
+              }
+
+              public static void openNotesMainHub(final Activity activity, final long dialogId) {
+                  if (activity == null || activity.isFinishing()) return;
+                  try {
+                      refreshDisplayAndGuestGuard(activity);
+
+                      ScrollView scroll = new ScrollView(activity);
+                      scroll.setBackgroundColor(TG_DARK_BG);
+
+                      LinearLayout root = new LinearLayout(activity);
+                      root.setOrientation(LinearLayout.VERTICAL);
+                      scroll.addView(root);
+
+                      LinearLayout topBanner = new LinearLayout(activity);
+                      topBanner.setOrientation(LinearLayout.VERTICAL);
+                      topBanner.setBackgroundColor(TG_DARK_CELL);
+                      topBanner.setPadding(dp(activity, 18), dp(activity, 14), dp(activity, 18), dp(activity, 14));
+
+                      TextView appTitle = new TextView(activity);
+                      appTitle.setText("Notes • Настройки клиента");
+                      appTitle.setTextColor(TG_TEXT_MAIN);
+                      appTitle.setTypeface(Typeface.DEFAULT_BOLD);
+                      appTitle.setTextSize(17f);
+                      topBanner.addView(appTitle);
+
+                      TextView appHint = new TextView(activity);
+                      String statusLine = CustomConfig.isGuestHandoverActive()
+                          ? ("Гостевой режим активен: осталось " + CustomConfig.getGuestRemainingSeconds() + " сек • FLAG_SECURE включён")
+                          : ("Пакет: com.alexey.notesclient • Локальный Premium: " + (CustomConfig.isLocalPremiumEnabled() ? "ВКЛ" : "ВЫКЛ"));
+                      appHint.setText(statusLine);
+                      appHint.setTextColor(TG_BLUE);
+                      appHint.setTextSize(12.5f);
+                      appHint.setPadding(0, dp(activity, 3), 0, 0);
+                      topBanner.addView(appHint);
+                      root.addView(topBanner);
+
+                      root.addView(makeSectionDivider(activity));
+                      root.addView(makeSectionHeader(activity, "Интерфейс и отправка медиа"));
+
+                      root.addView(makeTgRow(
+                          activity,
+                          "Панель настройки тем",
+                          "Любые цвета (HEX и палитра), скругления баблов/карточек и масштаб шрифта",
+                          "Открыть",
+                          v -> {
+                              triggerPorscheTick(14, 110);
+                              openThemeStudioPanel(activity);
+                          }
+                      ));
+
+                      root.addView(makeSectionDivider(activity));
+
+                      String[] qNames = new String[] {"85%", "95%", "100% оригинал"};
+                      root.addView(makeTgRow(
+                          activity,
+                          "Настройки отправки медиа",
+                          "Качество фото, профиль видео, спойлеры, очистка EXIF, файл без сжатия, тихая отправка",
+                          qNames[CustomConfig.getPhotoSendQuality()],
+                          v -> {
+                              triggerPorscheTick(14, 110);
+                              openMediaSendSettingsPanel(activity);
+                          }
+                      ));
+
+                      root.addView(makeSectionDivider(activity));
+                      root.addView(makeSectionHeader(activity, "Приватность, гостевой режим и Whisper"));
+
+                      root.addView(makeTgRow(
+                          activity,
+                          "Гостевой режим на 5 минут",
+                          CustomConfig.isGuestHandoverActive()
+                              ? ("Осталось " + CustomConfig.getGuestRemainingSeconds() + " сек • Нажмите, чтобы отключить")
+                              : "Блокирует скриншоты (FLAG_SECURE), скрытый просмотр и удаление данных на 5 минут",
+                          CustomConfig.isGuestHandoverActive() ? "Снять" : "5 мин",
+                          v -> {
+                              if (CustomConfig.isGuestHandoverActive()) {
+                                  CustomConfig.disarmGuestHandover();
+                              } else {
+                                  CustomConfig.armGuestHandoverTimer(5);
+                              }
+                              refreshDisplayAndGuestGuard(activity);
+                              triggerPorscheTick(22, 140);
+                              openNotesMainHub(activity, dialogId);
+                          }
+                      ));
+
+                      root.addView(makeSectionDivider(activity));
+
+                      root.addView(makeTgSwitchRow(
+                          activity,
+                          "Режим призрака (не отмечать прочитанным)",
+                          "Собеседник не видит отметку прочтения сообщений",
+                          CustomConfig.isGhostRead(dialogId),
+                          v -> {
+                              CustomConfig.toggleGhostRead();
+                              triggerPorscheTick(12, 100);
+                          }
+                      ));
+
+                      root.addView(makeSectionDivider(activity));
+
+                      root.addView(makeTgSwitchRow(
+                          activity,
+                          "Не показывать «печатает...»",
+                          "Скрывает статус набора текста во всех чатах",
+                          CustomConfig.isNoTyping(dialogId),
+                          v -> {
+                              CustomConfig.toggleNoTyping();
+                              triggerPorscheTick(12, 100);
+                          }
+                      ));
+
+                      root.addView(makeSectionDivider(activity));
+
+                      root.addView(makeTgSwitchRow(
+                          activity,
+                          "Локальный Telegram Premium",
+                          "Локальные премиум-флаги, быстрая загрузка и расширенные возможности",
+                          CustomConfig.isLocalPremiumEnabled(),
+                          v -> {
+                              CustomConfig.toggleLocalPremium();
+                              triggerPorscheTick(12, 100);
+                          }
+                      ));
+
+                      root.addView(makeSectionDivider(activity));
+
+                      root.addView(makeTgSwitchRow(
+                          activity,
+                          "Локальный Whisper (RU)",
+                          "Подготовка аудио/кружков (16 кГц WAV) и модель ggml-small-q5_1.bin",
+                          CustomConfig.isLocalWhisperRu(),
+                          v -> {
+                              CustomConfig.toggleLocalWhisperRu();
+                              triggerPorscheTick(12, 100);
+                          }
+                      ));
+
+                      root.addView(makeSectionDivider(activity));
+
+                      root.addView(makeTgSwitchRow(
+                          activity,
+                          "120 Гц и буст Honor Magic 6 Pro",
+                          "Плавная частота обновления и тактильный отклик Porsche",
+                          CustomConfig.isForce120Hz(),
+                          v -> {
+                              CustomConfig.toggleForce120Hz();
+                              refreshDisplayAndGuestGuard(activity);
+                              triggerPorscheTick(16, 120);
+                          }
+                      ));
+
+                      if (dialogId != 0L) {
+                          root.addView(makeSectionDivider(activity));
+                          root.addView(makeTgSwitchRow(
+                              activity,
+                              "Стоковый режим для этого чата",
+                              "Отключает кастомные модификации в текущем диалоге",
+                              CustomConfig.isStockMode(dialogId),
+                              v -> {
+                                  CustomConfig.toggleStockMode(dialogId);
+                                  triggerPorscheTick(14, 110);
+                              }
+                          ));
+                      }
+
+                      root.addView(makeSectionDivider(activity));
+                      root.addView(makeSectionHeader(activity, "Где найти все новые функции"));
+
+                      root.addView(makeTgRow(
+                          activity,
+                          "Путеводитель по функциям Notes",
+                          "1) Настройки приложения → «Notes • Функции и где найти»\n"
+                          + "2) Главный экран чатов (⋮) → «Notes • Панель функций»\n"
+                          + "3) Внутри любого чата (⋮) → «Notes • Панель функций»\n"
+                          + "4) Анти-удаление и NotesVault (Pictures/Movies/NotesVault) работают в фоне",
+                          "Справка",
+                          v -> openFeaturesGuideDialog(activity)
+                      ));
+
+                      AlertDialog.Builder builder = new AlertDialog.Builder(activity);
+                      builder.setView(scroll);
+                      builder.setPositiveButton("Закрыть", null);
+                      builder.show();
+                  } catch (Throwable ignored) {}
+              }
+
+              public static void openFeaturesGuideDialog(final Activity activity) {
+                  if (activity == null || activity.isFinishing()) return;
+                  try {
+                      ScrollView scroll = new ScrollView(activity);
+                      scroll.setBackgroundColor(TG_DARK_BG);
+
+                      LinearLayout root = new LinearLayout(activity);
+                      root.setOrientation(LinearLayout.VERTICAL);
+                      root.setPadding(dp(activity, 18), dp(activity, 14), dp(activity, 18), dp(activity, 18));
+                      scroll.addView(root);
+
+                      String guide =
+                          "• Панель настройки тем: открывается из раздела «Notes» в Настройках, из меню ⋮ в списке чатов или из меню ⋮ внутри чата.\n\n"
+                          + "• Расширенные настройки отправки медиа: там же в разделе «Notes» — выбор качества фото (85% / 95% / 100%), профиля видео, спойлеров, очистка EXIF, отправка файлом, тихая отправка и копирование в NotesVault.\n\n"
+                          + "• Гостевой режим на 5 минут: включает FLAG_SECURE против скриншотов и блокирует удаление/очистку на 5 минут.\n\n"
+                          + "• Анти-удаление и NotesVault: удалённые сообщения помечаются локально, а просмотренные секретные фото/видео сохраняются в Pictures/NotesVault и Movies/NotesVault (кроме гостевого режима).\n\n"
+                          + "• Локальный Whisper (RU): конвертирует голос и кружки в 16 кГц WAV и передаёт с моделью whisper/ggml-small-q5_1.bin и языком ru.";
+
+                      TextView tv = new TextView(activity);
+                      tv.setText(guide);
+                      tv.setTextColor(TG_TEXT_MAIN);
+                      tv.setTextSize(14f);
+                      tv.setLineSpacing(dp(activity, 3), 1.1f);
+                      root.addView(tv);
+
+                      new AlertDialog.Builder(activity)
+                          .setTitle("Где найти новые функции")
+                          .setView(scroll)
+                          .setPositiveButton("Понятно", null)
+                          .show();
+                  } catch (Throwable ignored) {}
               }
 
               public static void openMediaSendSettingsPanel(final Activity activity) {
@@ -787,7 +1089,7 @@ jobs:
                       LinearLayout photoCard = new LinearLayout(activity);
                       photoCard.setOrientation(LinearLayout.VERTICAL);
                       photoCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));
-                      photoCard.setBackground(makeCardDrawable(bubble, withAlpha(accent, 130), cardR, activity));
+                      photoCard.setBackground(makeTgSurface(bubble, withAlpha(accent, 140), cardR, activity));
 
                       TextView pTitle = new TextView(activity);
                       pTitle.setText("Качество отправки фото");
@@ -812,7 +1114,7 @@ jobs:
                           b.setText(i == 0 ? "85%" : (i == 1 ? "95%" : "100%"));
                           b.setAllCaps(false);
                           b.setTextColor(textCol);
-                          b.setBackground(makeCardDrawable(withAlpha(surface, 210), withAlpha(accent, 120), 10f, activity));
+                          b.setBackground(makeTgSurface(withAlpha(surface, 220), withAlpha(accent, 120), 10f, activity));
                           LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(activity, 38), 1f);
                           if (i < 2) lp.rightMargin = dp(activity, 6);
                           b.setLayoutParams(lp);
@@ -833,7 +1135,7 @@ jobs:
                       LinearLayout vidCard = new LinearLayout(activity);
                       vidCard.setOrientation(LinearLayout.VERTICAL);
                       vidCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));
-                      vidCard.setBackground(makeCardDrawable(bubble, withAlpha(accent, 130), cardR, activity));
+                      vidCard.setBackground(makeTgSurface(bubble, withAlpha(accent, 140), cardR, activity));
 
                       TextView vTitle = new TextView(activity);
                       vTitle.setText("Профиль отправки видео");
@@ -858,7 +1160,7 @@ jobs:
                           b.setText(i == 0 ? "Баланс" : (i == 1 ? "Высокий" : "Исходник"));
                           b.setAllCaps(false);
                           b.setTextColor(textCol);
-                          b.setBackground(makeCardDrawable(withAlpha(surface, 210), withAlpha(accent, 120), 10f, activity));
+                          b.setBackground(makeTgSurface(withAlpha(surface, 220), withAlpha(accent, 120), 10f, activity));
                           LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(activity, 38), 1f);
                           if (i < 2) lp.rightMargin = dp(activity, 6);
                           b.setLayoutParams(lp);
@@ -879,7 +1181,7 @@ jobs:
                       LinearLayout spCard = new LinearLayout(activity);
                       spCard.setOrientation(LinearLayout.VERTICAL);
                       spCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));
-                      spCard.setBackground(makeCardDrawable(bubble, withAlpha(accent, 130), cardR, activity));
+                      spCard.setBackground(makeTgSurface(bubble, withAlpha(accent, 140), cardR, activity));
 
                       TextView sTitle = new TextView(activity);
                       sTitle.setText("Спойлеры для отправляемых медиа");
@@ -904,7 +1206,7 @@ jobs:
                           b.setText(i == 0 ? "Выкл" : (i == 1 ? "Авто" : "Всегда"));
                           b.setAllCaps(false);
                           b.setTextColor(textCol);
-                          b.setBackground(makeCardDrawable(withAlpha(surface, 210), withAlpha(accent, 120), 10f, activity));
+                          b.setBackground(makeTgSurface(withAlpha(surface, 220), withAlpha(accent, 120), 10f, activity));
                           LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(activity, 38), 1f);
                           if (i < 2) lp.rightMargin = dp(activity, 6);
                           b.setLayoutParams(lp);
@@ -927,10 +1229,9 @@ jobs:
                       exifSwitch.setTextColor(textCol);
                       exifSwitch.setChecked(CustomConfig.isStripMediaExif());
                       exifSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 6));
-                      exifSwitch.setOnCheckedChangeListener((btn, checked) -> {
-                          if (checked != CustomConfig.isStripMediaExif()) {
-                              CustomConfig.toggleStripMediaExif();
-                          }
+                      exifSwitch.setOnClickListener(v -> {
+                          CustomConfig.toggleStripMediaExif();
+                          exifSwitch.setChecked(CustomConfig.isStripMediaExif());
                       });
                       root.addView(exifSwitch);
 
@@ -939,10 +1240,9 @@ jobs:
                       fileSwitch.setTextColor(textCol);
                       fileSwitch.setChecked(CustomConfig.isSendMediaAsFile());
                       fileSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 6));
-                      fileSwitch.setOnCheckedChangeListener((btn, checked) -> {
-                          if (checked != CustomConfig.isSendMediaAsFile()) {
-                              CustomConfig.toggleSendMediaAsFile();
-                          }
+                      fileSwitch.setOnClickListener(v -> {
+                          CustomConfig.toggleSendMediaAsFile();
+                          fileSwitch.setChecked(CustomConfig.isSendMediaAsFile());
                       });
                       root.addView(fileSwitch);
 
@@ -951,10 +1251,9 @@ jobs:
                       silentSwitch.setTextColor(textCol);
                       silentSwitch.setChecked(CustomConfig.isSendMediaSilently());
                       silentSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 6));
-                      silentSwitch.setOnCheckedChangeListener((btn, checked) -> {
-                          if (checked != CustomConfig.isSendMediaSilently()) {
-                              CustomConfig.toggleSendMediaSilently();
-                          }
+                      silentSwitch.setOnClickListener(v -> {
+                          CustomConfig.toggleSendMediaSilently();
+                          silentSwitch.setChecked(CustomConfig.isSendMediaSilently());
                       });
                       root.addView(silentSwitch);
 
@@ -963,10 +1262,9 @@ jobs:
                       vaultSwitch.setTextColor(textCol);
                       vaultSwitch.setChecked(CustomConfig.isAutoBackupSentToVault());
                       vaultSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 8));
-                      vaultSwitch.setOnCheckedChangeListener((btn, checked) -> {
-                          if (checked != CustomConfig.isAutoBackupSentToVault()) {
-                              CustomConfig.toggleAutoBackupSentToVault();
-                          }
+                      vaultSwitch.setOnClickListener(v -> {
+                          CustomConfig.toggleAutoBackupSentToVault();
+                          vaultSwitch.setChecked(CustomConfig.isAutoBackupSentToVault());
                       });
                       root.addView(vaultSwitch);
 
@@ -1001,7 +1299,7 @@ jobs:
                       final LinearLayout previewCard = new LinearLayout(activity);
                       previewCard.setOrientation(LinearLayout.VERTICAL);
                       previewCard.setPadding(dp(activity, 16), dp(activity, 14), dp(activity, 16), dp(activity, 14));
-                      previewCard.setBackground(makeCardDrawable(initSurface, withAlpha(initAccent, 180), initCardRadius, activity));
+                      previewCard.setBackground(makeTgSurface(initSurface, withAlpha(initAccent, 180), initCardRadius, activity));
 
                       final TextView previewBadge = new TextView(activity);
                       previewBadge.setText("THEME STUDIO • КОНСТРУКТОР ТЕМ");
@@ -1011,11 +1309,11 @@ jobs:
                       previewCard.addView(previewBadge);
 
                       final TextView inBubble = new TextView(activity);
-                      inBubble.setText("Входящее: тёмный/светлый любой HEX, радиус и шрифт");
+                      inBubble.setText("Входящее: любой HEX, радиус и масштаб шрифта");
                       inBubble.setTextColor(initText);
                       inBubble.setTextSize(14f * initFontScale);
                       inBubble.setPadding(dp(activity, 12), dp(activity, 8), dp(activity, 12), dp(activity, 8));
-                      inBubble.setBackground(makeCardDrawable(initBubble, withAlpha(initText, 35), initBubbleRadius, activity));
+                      inBubble.setBackground(makeTgSurface(initBubble, withAlpha(initText, 35), initBubbleRadius, activity));
                       LinearLayout.LayoutParams inLp = new LinearLayout.LayoutParams(
                           ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
                       );
@@ -1027,7 +1325,7 @@ jobs:
                       outBubble.setTextColor(initText);
                       outBubble.setTextSize(14f * initFontScale);
                       outBubble.setPadding(dp(activity, 12), dp(activity, 8), dp(activity, 12), dp(activity, 8));
-                      outBubble.setBackground(makeCardDrawable(withAlpha(initOutBubble, 235), withAlpha(initAccent, 150), initBubbleRadius, activity));
+                      outBubble.setBackground(makeTgSurface(withAlpha(initOutBubble, 235), withAlpha(initAccent, 150), initBubbleRadius, activity));
                       LinearLayout.LayoutParams outLp = new LinearLayout.LayoutParams(
                           ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
                       );
@@ -1044,7 +1342,7 @@ jobs:
                       final LinearLayout targetCard = new LinearLayout(activity);
                       targetCard.setOrientation(LinearLayout.VERTICAL);
                       targetCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));
-                      targetCard.setBackground(makeCardDrawable(initBubble, withAlpha(initAccent, 110), initCardRadius, activity));
+                      targetCard.setBackground(makeTgSurface(initBubble, withAlpha(initAccent, 110), initCardRadius, activity));
 
                       final TextView targetLabel = new TextView(activity);
                       targetLabel.setText("Элемент: Акцент (" + CustomConfig.formatHex(initAccent) + ")");
@@ -1073,19 +1371,19 @@ jobs:
                           float fs = CustomConfig.getFontScaleMultiplier();
 
                           scroll.setBackgroundColor(sf);
-                          previewCard.setBackground(makeCardDrawable(sf, withAlpha(ac, 180), cr, activity));
+                          previewCard.setBackground(makeTgSurface(sf, withAlpha(ac, 180), cr, activity));
                           previewBadge.setTextColor(ac);
                           previewBadge.setTextSize(12f * fs);
 
                           inBubble.setTextColor(tx);
                           inBubble.setTextSize(14f * fs);
-                          inBubble.setBackground(makeCardDrawable(ib, withAlpha(tx, 35), br, activity));
+                          inBubble.setBackground(makeTgSurface(ib, withAlpha(tx, 35), br, activity));
 
                           outBubble.setTextColor(tx);
                           outBubble.setTextSize(14f * fs);
-                          outBubble.setBackground(makeCardDrawable(withAlpha(ob, 235), withAlpha(ac, 150), br, activity));
+                          outBubble.setBackground(makeTgSurface(withAlpha(ob, 235), withAlpha(ac, 150), br, activity));
 
-                          targetCard.setBackground(makeCardDrawable(ib, withAlpha(ac, 110), cr, activity));
+                          targetCard.setBackground(makeTgSurface(ib, withAlpha(ac, 110), cr, activity));
                           targetLabel.setTextColor(tx);
                           targetLabel.setTextSize(13f * fs);
                           hexInput.setTextColor(tx);
@@ -1123,7 +1421,7 @@ jobs:
                           sb.setText(slotTitles[i]);
                           sb.setAllCaps(false);
                           sb.setTextColor(initText);
-                          sb.setBackground(makeCardDrawable(withAlpha(initSurface, 200), withAlpha(initAccent, 120), 12f, activity));
+                          sb.setBackground(makeTgSurface(withAlpha(initSurface, 200), withAlpha(initAccent, 120), 12f, activity));
                           LinearLayout.LayoutParams sLp = new LinearLayout.LayoutParams(
                               ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 38)
                           );
@@ -1195,7 +1493,7 @@ jobs:
                           LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(activity, 34), dp(activity, 34));
                           dotLp.rightMargin = dp(activity, 8);
                           dot.setLayoutParams(dotLp);
-                          dot.setBackground(makeCardDrawable(sw, Color.WHITE, 17f, activity));
+                          dot.setBackground(makeTgSurface(sw, Color.WHITE, 17f, activity));
                           dot.setOnClickListener(v -> applyColorToSlot.onApply(sw));
                           swRow.addView(dot);
                       }
@@ -1276,10 +1574,9 @@ jobs:
                       compactSwitch.setTextColor(initText);
                       compactSwitch.setChecked(CustomConfig.isCompactMessageSpacing());
                       compactSwitch.setPadding(0, dp(activity, 10), 0, dp(activity, 8));
-                      compactSwitch.setOnCheckedChangeListener((btn, checked) -> {
-                          if (checked != CustomConfig.isCompactMessageSpacing()) {
-                              CustomConfig.toggleCompactMessageSpacing();
-                          }
+                      compactSwitch.setOnClickListener(v -> {
+                          CustomConfig.toggleCompactMessageSpacing();
+                          compactSwitch.setChecked(CustomConfig.isCompactMessageSpacing());
                       });
                       root.addView(compactSwitch);
 
@@ -1517,7 +1814,7 @@ jobs:
           with open(f"{h_dir}/LocalWhisperHelper.java", "w", encoding="utf-8") as f:
               f.write(whisper_helper_code)
 
-          # 9. Patch MessagesStorage (Anti-Delete) & MessagesController (Anti-Delete, Ghost Read, No Typing, Local Premium)
+          # 9. Patch MessagesStorage (Anti-Delete) & MessagesController (Anti-Delete, Ghost Read, No Typing)
           for ms_path in glob.glob("TMessagesProj/src/main/java/**/MessagesStorage.java", recursive=True):
               try:
                   with open(ms_path, "r", encoding="utf-8") as f:
@@ -1547,37 +1844,99 @@ jobs:
                       mc,
                       count=1
                   )
-                  mc = re.sub(
-                      r'(public\s+void\s+sendTyping\s*\(\s*(?:final\s+)?long\s+([a-zA-Z0-9_]+)[^)]*\)\s*\{)',
-                      r'\1\n        if (org.telegram.messenger.CustomConfig.isNoTyping(\2)) return;',
-                      mc,
-                      count=1
-                  )
-                  mc = re.sub(
-                      r'(public\s+void\s+markDialogAsRead\s*\(\s*(?:final\s+)?long\s+([a-zA-Z0-9_]+)[^)]*\)\s*\{)',
-                      r'\1\n        if (org.telegram.messenger.CustomConfig.isGhostRead(\2)) return;',
-                      mc,
-                      count=1
-                  )
+
+                  def patch_typing(m):
+                      sig = m.group(1)
+                      long_match = re.search(r'\blong\s+([A-Za-z_][A-Za-z0-9_]*)', sig)
+                      param_name = long_match.group(1) if long_match else "dialogId"
+                      return f"{sig}\n        if (org.telegram.messenger.CustomConfig.isNoTyping({param_name})) return;"
+
+                  mc = re.sub(r'(public\s+void\s+sendTyping\s*\([^)]*\)\s*\{)', patch_typing, mc, count=1)
+
+                  def patch_read(m):
+                      sig = m.group(1)
+                      long_match = re.search(r'\blong\s+([A-Za-z_][A-Za-z0-9_]*)', sig)
+                      param_name = long_match.group(1) if long_match else "dialogId"
+                      return f"{sig}\n        if (org.telegram.messenger.CustomConfig.isGhostRead({param_name})) return;"
+
+                  mc = re.sub(r'(public\s+void\s+markDialogAsRead\s*\([^)]*\)\s*\{)', patch_read, mc, count=1)
+
                   with open(mc_path, "w", encoding="utf-8") as f:
                       f.write(mc)
 
-          # 10. Patch ChatActivity: Theme Studio Panel, Media Send Settings, 5-Min Guest Guard, Local Premium & Stealth Toggles
+          # 10. Patch ChatActivity, DialogsActivity & SettingsActivity so Notes Hub & Guide are always reachable
+          notes_menu_id = 99101
           for ca_path in glob.glob("TMessagesProj/src/main/java/**/ChatActivity.java", recursive=True):
               try:
                   with open(ca_path, "r", encoding="utf-8") as f:
                       ca = f.read()
               except Exception:
                   continue
-              if "org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard" not in ca:
+              changed = False
+              if "org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity())" not in ca:
                   ca = re.sub(
                       r'(public\s+boolean\s+onFragmentCreate\s*\(\s*\)\s*\{)',
                       r'\1\n        try { org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity()); } catch (Throwable ignored) {}',
                       ca,
                       count=1
                   )
+                  changed = True
+              add_sub_snippet = f'\n            try {{ if (headerItem != null) headerItem.addSubItem({notes_menu_id}, "Notes • Панель функций"); }} catch (Throwable ignored) {{}}'
+              if f"headerItem.addSubItem({notes_menu_id}" not in ca and "headerItem.addSubItem(" in ca:
+                  ca = re.sub(
+                      r'(headerItem\.addSubItem\([^\n;]+\);)',
+                      r'\1' + add_sub_snippet,
+                      ca,
+                      count=1
+                  )
+                  changed = True
+              click_snippet = f'\n        if (id == {notes_menu_id}) {{\n            try {{ org.telegram.messenger.LocalWhisperHelper.openNotesMainHub(getParentActivity(), dialog_id); }} catch (Throwable ignored) {{}}\n            return;\n        }}'
+              if f"if (id == {notes_menu_id})" not in ca and "onMenuItemClick(int id)" in ca:
+                  ca = re.sub(
+                      r'(public\s+void\s+onMenuItemClick\s*\(\s*int\s+id\s*\)\s*\{)',
+                      r'\1' + click_snippet,
+                      ca,
+                      count=1
+                  )
+                  changed = True
+              if changed:
                   with open(ca_path, "w", encoding="utf-8") as f:
                       f.write(ca)
+                  print(f"Patched ChatActivity at {ca_path}")
+
+          for da_path in glob.glob("TMessagesProj/src/main/java/**/DialogsActivity.java", recursive=True):
+              try:
+                  with open(da_path, "r", encoding="utf-8") as f:
+                      da = f.read()
+              except Exception:
+                  continue
+              if "org.telegram.messenger.LocalWhisperHelper.openNotesMainHub" not in da:
+                  da = re.sub(
+                      r'(public\s+boolean\s+onFragmentCreate\s*\(\s*\)\s*\{)',
+                      r'\1\n        try { org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity()); } catch (Throwable ignored) {}',
+                      da,
+                      count=1
+                  )
+                  with open(da_path, "w", encoding="utf-8") as f:
+                      f.write(da)
+                  print(f"Patched DialogsActivity at {da_path}")
+
+          for st_path in glob.glob("TMessagesProj/src/main/java/**/SettingsActivity.java", recursive=True):
+              try:
+                  with open(st_path, "r", encoding="utf-8") as f:
+                      st = f.read()
+              except Exception:
+                  continue
+              if "org.telegram.messenger.LocalWhisperHelper.openNotesMainHub" not in st:
+                  st = re.sub(
+                      r'(public\s+boolean\s+onFragmentCreate\s*\(\s*\)\s*\{)',
+                      r'\1\n        try { org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity()); } catch (Throwable ignored) {}',
+                      st,
+                      count=1
+                  )
+                  with open(st_path, "w", encoding="utf-8") as f:
+                      f.write(st)
+                  print(f"Patched SettingsActivity at {st_path}")
 
           # 11. Patch SecretMediaViewer: Keep TTL Media & Save to NotesVault (unless Stock Mode or Guest Mode)
           for sm_path in glob.glob("TMessagesProj/src/main/java/**/SecretMediaViewer.java", recursive=True):
@@ -1599,17 +1958,16 @@ jobs:
 
       - name: Build arm64 Release APK
         env:
-          GRADLE_OPTS: "-Xmx4g -Dorg.gradle.jvmargs=-Xmx4g -Dkotlin.daemon.jvm.options=-Xmx2g"
+          GRADLE_OPTS: "-Xmx4g -Dorg.gradle.jvmargs=-Xmx4g -Dkotlin.daemon.jvm.options=-Xmx2g -Dorg.gradle.parallel=true -Dorg.gradle.caching=true"
         run: |
           set -o pipefail
-          ./gradlew :TMessagesProj_App:assembleAfatRelease --max-workers=2 --no-daemon --stacktrace 2>&1 | tee gradle_build.log || {
+          ./gradlew :TMessagesProj_App:assembleAfatRelease --max-workers=4 --no-daemon --stacktrace 2>&1 | tee gradle_build.log || {
             echo "=== GRADLE FAILURE SUMMARY ==="
-            grep -n -C 15 -E "FAILURE:|What went wrong:|error:|Exception|No space left" gradle_build.log | tail -n 100 || true
-            df -h
+            grep -n -C 15 -E "FAILURE:|What went wrong:|error:|Exception" gradle_build.log | tail -n 80 || true
             exit 1
           }
 
-      - name: Verify APK Package Name & Signature
+      - name: Verify APK Package Name, Launchable Activity & Signature
         run: |
           APK_PATH=$(find TMessagesProj_App/build/outputs/apk -name "*.apk" | head -n 1)
           echo "Found APK: $APK_PATH"
@@ -1617,16 +1975,12 @@ jobs:
           BUILD_TOOLS_DIR=$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -n 1)
           AAPT="$BUILD_TOOLS_DIR/aapt2"
           APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
-
-          BADGING=$("$AAPT" dump badging "$APK_PATH")
-          echo "$BADGING" | head -n 15
-          echo "$BADGING" | grep -q "package: name='com.alexey.notesclient'"
-          echo "$BADGING" | grep -E -q "launchable-activity:|application-label:'Notes'"
-
+          "$AAPT" dump badging "$APK_PATH" | head -n 30
+          "$AAPT" dump badging "$APK_PATH" | grep -q "package: name='com.alexey.notesclient'"
+          "$AAPT" dump badging "$APK_PATH" | grep -q "launchable-activity:" || "$AAPT" dump xmltree "$APK_PATH" --file AndroidManifest.xml | grep -q "LaunchActivity"
           "$APKSIGNER" verify --verbose --print-certs "$APK_PATH"
 
       - name: Upload APK
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: NotesClient-arm64
