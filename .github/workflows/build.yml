@@ -7,6 +7,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - name: Free Up Disk Space on Runner
+        run: |
+          df -h
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk/* /opt/ghc /usr/local/.ghcup || true
+          df -h
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -183,12 +189,15 @@ jobs:
                   with open(gf_path, "w", encoding="utf-8") as f:
                       f.write(gf_new)
 
-          # 3. Force applicationId & Configure Release Signing ONLY on TMessagesProj_App
+          # 3. Force applicationId, arm64-only ABI filter & Release Signing on TMessagesProj_App
           app_id_and_signing_patch = f"""
           if (project.hasProperty("android")) {{
               project.android {{
                   defaultConfig {{
                       applicationId "{new_pkg}"
+                      ndk {{
+                          abiFilters "arm64-v8a"
+                      }}
                   }}
                   productFlavors.all {{ flavor ->
                       if (flavor.hasProperty("applicationId")) {{
@@ -199,16 +208,15 @@ jobs:
                       }}
                   }}
                   signingConfigs {{
-                      customRelease {{
-                          storeFile project.rootProject.file("TMessagesProj/my_telegram.jks")
-                          storePassword System.getenv("EFFECTIVE_STORE_PASS") ?: "android123"
-                          keyAlias System.getenv("EFFECTIVE_KEY_ALIAS") ?: "telegram"
-                          keyPassword System.getenv("EFFECTIVE_KEY_PASS") ?: "android123"
-                      }}
+                      def relCfg = findByName("release") ?: create("release")
+                      relCfg.storeFile = project.rootProject.file("TMessagesProj/my_telegram.jks")
+                      relCfg.storePassword = System.getenv("EFFECTIVE_STORE_PASS") ?: "android123"
+                      relCfg.keyAlias = System.getenv("EFFECTIVE_KEY_ALIAS") ?: "telegram"
+                      relCfg.keyPassword = System.getenv("EFFECTIVE_KEY_PASS") ?: "android123"
                   }}
                   buildTypes {{
                       release {{
-                          signingConfig signingConfigs.customRelease
+                          signingConfig signingConfigs.release
                       }}
                   }}
               }}
@@ -217,7 +225,7 @@ jobs:
           if os.path.exists("TMessagesProj_App/build.gradle"):
               with open("TMessagesProj_App/build.gradle", "r", encoding="utf-8") as f:
                   mg = f.read()
-              if "signingConfigs.customRelease" not in mg:
+              if "my_telegram.jks" not in mg:
                   with open("TMessagesProj_App/build.gradle", "w", encoding="utf-8") as f:
                       f.write(mg + "\n" + app_id_and_signing_patch)
 
@@ -1596,7 +1604,8 @@ jobs:
           set -o pipefail
           ./gradlew :TMessagesProj_App:assembleAfatRelease --max-workers=2 --no-daemon --stacktrace 2>&1 | tee gradle_build.log || {
             echo "=== GRADLE FAILURE SUMMARY ==="
-            grep -n -C 15 -E "FAILURE:|What went wrong:|error:|Exception" gradle_build.log | tail -n 80 || true
+            grep -n -C 15 -E "FAILURE:|What went wrong:|error:|Exception|No space left" gradle_build.log | tail -n 100 || true
+            df -h
             exit 1
           }
 
