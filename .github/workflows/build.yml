@@ -1,4 +1,4 @@
-name: Build Custom Stealth Client APK v4
+name: Build Custom Stealth Client APK v5
 
 on:
   workflow_dispatch:
@@ -46,13 +46,13 @@ jobs:
           if [ -n "$KEYSTORE_B64" ]; then
             echo "$KEYSTORE_B64" | tr -d '[:space:]' | base64 -d > "$KS_PATH" || true
             if keytool -list -keystore "$KS_PATH" -storepass "$STORE_PASS" -alias "$KEY_ALIAS" >/dev/null 2>&1; then
-              echo "[v4][KEYSTORE] Decoded keystore verified successfully for alias '$KEY_ALIAS'."
+              echo "[v5][KEYSTORE] Decoded keystore verified successfully for alias '$KEY_ALIAS'."
               VALID_KS=1
             else
-              echo "[v4][KEYSTORE] Warning: Provided keystore or alias '$KEY_ALIAS' failed verification."
+              echo "[v5][KEYSTORE] Warning: Provided keystore or alias '$KEY_ALIAS' failed verification."
               DETECTED_ALIAS=$(keytool -list -keystore "$KS_PATH" -storepass "$STORE_PASS" 2>/dev/null | grep -E "PrivateKeyEntry|keyEntry" | head -n 1 | cut -d',' -f1 | tr -d '[:space:]')
               if [ -n "$DETECTED_ALIAS" ]; then
-                echo "[v4][KEYSTORE] Auto-detected alias inside keystore: $DETECTED_ALIAS"
+                echo "[v5][KEYSTORE] Auto-detected alias inside keystore: $DETECTED_ALIAS"
                 KEY_ALIAS="$DETECTED_ALIAS"
                 VALID_KS=1
               fi
@@ -60,7 +60,7 @@ jobs:
           fi
 
           if [ "$VALID_KS" -eq 0 ]; then
-            echo "[v4][KEYSTORE] Generating fresh fallback release keystore..."
+            echo "[v5][KEYSTORE] Generating fresh fallback release keystore..."
             rm -f "$KS_PATH"
             STORE_PASS="android123"
             KEY_ALIAS="telegram"
@@ -90,59 +90,30 @@ jobs:
 
           if not os.path.exists(model_path):
               try:
-                  print("[v4][WHISPER] Downloading Russian-capable local Whisper model (ggml-small-q5_1.bin)...")
+                  print("[v5][WHISPER] Downloading Russian-capable local Whisper model (ggml-small-q5_1.bin)...")
                   req = urllib.request.Request(model_url, headers={"User-Agent": "Mozilla/5.0"})
                   with urllib.request.urlopen(req, timeout=120) as resp, open(model_path, "wb") as out:
                       out.write(resp.read())
-                  print(f"[v4][WHISPER] Downloaded model to {model_path} ({os.path.getsize(model_path)} bytes)")
+                  print(f"[v5][WHISPER] Downloaded model to {model_path} ({os.path.getsize(model_path)} bytes)")
               except Exception as e:
-                  print(f"[v4][WHISPER][WARN] Could not pre-download Whisper model during build ({e}).")
+                  print(f"[v5][WHISPER][WARN] Could not pre-download Whisper model during build ({e}).")
           else:
-              print(f"[v4][WHISPER] Model already present at {model_path} ({os.path.getsize(model_path)} bytes)")
+              print(f"[v5][WHISPER] Model already present at {model_path} ({os.path.getsize(model_path)} bytes)")
           EOF
 
-      - name: Apply Stealth, Anti-Delete, Secret Media, Local RU Whisper, Local Premium, Guest Mode & Telegram-Style Notes Hub Patches (v4)
+      - name: Apply Stealth, Anti-Delete, Secret Media, Local RU Whisper, Local Premium, Guest Mode & Telegram-Style Notes Hub Patches (v5)
         env:
           RAW_API_ID: ${{ secrets.TG_API_ID }}
           RAW_API_HASH: ${{ secrets.TG_API_HASH }}
           NEW_PKG: "com.alexey.notesclient"
           NEW_NAME: "Notes"
         run: |
-          mkdir -p v4_diagnostics
-          python3 - << 'EOF' | tee v4_diagnostics/patch_report.log
+          mkdir -p v5_diagnostics
+          python3 - << 'EOF' | tee v5_diagnostics/patch_report.log
           import os, re, glob, json, copy
 
           def diag(tag, msg):
-              print(f"[v4][{tag}] {msg}", flush=True)
-
-          def find_matching_brace(text, open_brace_idx):
-              depth = 0
-              in_str = False
-              str_ch = ''
-              esc = False
-              i = open_brace_idx
-              n = len(text)
-              while i < n:
-                  ch = text[i]
-                  if in_str:
-                      if esc:
-                          esc = False
-                      elif ch == '\\':
-                          esc = True
-                      elif ch == str_ch:
-                          in_str = False
-                  else:
-                      if ch in ('"', "'"):
-                          in_str = True
-                          str_ch = ch
-                      elif ch == '{':
-                          depth += 1
-                      elif ch == '}':
-                          depth -= 1
-                          if depth == 0:
-                              return i
-                  i += 1
-              return -1
+              print(f"[v5][{tag}] {msg}", flush=True)
 
           def inject_at_method_start(src, method_pattern, snippet, marker):
               if marker in src:
@@ -155,30 +126,13 @@ jobs:
                   return src, 0, "no_open_brace"
               return src[:brace_idx + 1] + "\n" + snippet + "\n" + src[brace_idx + 1:], 1, "injected_at_start"
 
-          def inject_at_method_end(src, method_pattern, snippet, marker, returns_bool=False):
-              if marker in src:
-                  return src, 0, "already_present"
-              m = re.search(method_pattern, src)
-              if not m:
-                  return src, 0, "method_not_found"
-              brace_idx = src.find("{", m.end() - 1)
-              if brace_idx == -1:
-                  return src, 0, "no_open_brace"
-              close_idx = find_matching_brace(src, brace_idx)
-              if close_idx == -1:
-                  return src, 0, "no_close_brace"
-              body = src[brace_idx + 1:close_idx]
-              tail_stmt = "return true;" if returns_bool else ""
-              block = "\n" + snippet + ("\n" + tail_stmt if tail_stmt else "") + "\n"
-              return src[:brace_idx + 1] + body + block + src[close_idx:], 1, "injected_before_close"
-
           raw_api_id = os.environ.get("RAW_API_ID", "").strip()
           api_id = raw_api_id if raw_api_id.isdigit() else "2040"
           api_hash = os.environ.get("RAW_API_HASH", "").strip() or "b18441a1ff607e10a989891a5462e627"
           new_pkg = os.environ.get("NEW_PKG", "com.alexey.notesclient").strip()
           new_name = os.environ.get("NEW_NAME", "Notes").strip()
 
-          diag("DIAG", f"Workflow version: v4 | target pkg={new_pkg} | name={new_name}")
+          diag("DIAG", f"Workflow version: v5 | target pkg={new_pkg} | name={new_name}")
           diag("DIAG", f"Exists TMessagesProj={os.path.isdir('TMessagesProj')} | TMessagesProj_App={os.path.isdir('TMessagesProj_App')}")
 
           # 0. Maven Central Mirror fallback to avoid HTTP 429
@@ -884,7 +838,7 @@ jobs:
               "      topBanner.setBackgroundColor(TG_DARK_CELL);",
               "      topBanner.setPadding(dp(activity, 18), dp(activity, 14), dp(activity, 18), dp(activity, 14));",
               "      TextView appTitle = new TextView(activity);",
-              "      appTitle.setText(\"Notes - Настройки клиента [v4]\");",
+              "      appTitle.setText(\"Notes - Настройки клиента [v5]\");",
               "      appTitle.setTextColor(TG_TEXT_MAIN);",
               "      appTitle.setTypeface(Typeface.DEFAULT_BOLD);",
               "      appTitle.setTextSize(17f);",
@@ -1582,7 +1536,7 @@ jobs:
                       f.write(mc_new)
               diag("MSG_CTRL", f"Patched {mc_path} del={c_del}({st_del}) typ={c_typ}({st_typ}) read={c_rd}({st_rd})")
 
-          # 10. Patch ChatActivity, DialogsActivity & SettingsActivity safely (no unreachable code or missing symbols)
+          # 10. Patch ChatActivity, DialogsActivity & SettingsActivity without unverified variable references
           notes_menu_id = 99101
 
           ca_files = glob.glob("TMessagesProj/src/main/java/**/ChatActivity.java", recursive=True)
@@ -1600,10 +1554,10 @@ jobs:
                   '        try { org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity()); } catch (Throwable ignored) {}',
                   "org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity())"
               )
-              add_sub_snippet = f'            try {{ if (headerItem != null) headerItem.addSubItem({notes_menu_id}, "Notes - Панель функций [v4]"); }} catch (Throwable ignored) {{}}'
+              add_sub_snippet = f'            try {{ if (headerItem != null) headerItem.addSubItem({notes_menu_id}, "Notes - Панель функций [v5]"); }} catch (Throwable ignored) {{}}'
               c_menu = 0
-              st_menu = "skipped"
-              if f"headerItem.addSubItem({notes_menu_id}" not in ca and "headerItem" in ca:
+              st_menu = "headerItem_not_found"
+              if f"headerItem.addSubItem({notes_menu_id}" not in ca and re.search(r'\bActionBarMenuItem\s+headerItem\b', ca):
                   ca, c_menu, st_menu = inject_at_method_start(
                       ca,
                       r'public\s+View\s+createView\s*\([^)]*\)',
@@ -1637,16 +1591,6 @@ jobs:
                   '        try { org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity()); } catch (Throwable ignored) {}',
                   "org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity())"
               )
-              da_sub_snippet = f'            try {{ if (otherItem != null) otherItem.addSubItem({notes_menu_id}, "Notes - Панель функций [v4]"); }} catch (Throwable ignored) {{}}'
-              c_da_menu = 0
-              st_da_menu = "otherItem_not_found"
-              if f"otherItem.addSubItem({notes_menu_id}" not in da and re.search(r'\botherItem\b', da):
-                  da, c_da_menu, st_da_menu = inject_at_method_start(
-                      da,
-                      r'public\s+View\s+createView\s*\([^)]*\)',
-                      da_sub_snippet,
-                      f"otherItem.addSubItem({notes_menu_id}"
-                  )
               da_click_snippet = f'        if (id == {notes_menu_id}) {{ try {{ org.telegram.messenger.LocalWhisperHelper.openNotesMainHub(getParentActivity(), 0L); }} catch (Throwable ignored) {{}} return; }}'
               da, c_da_click, st_da_click = inject_at_method_start(
                   da,
@@ -1654,10 +1598,10 @@ jobs:
                   da_click_snippet,
                   f"if (id == {notes_menu_id})"
               )
-              if (c_da + c_da_menu + c_da_click) > 0:
+              if (c_da + c_da_click) > 0:
                   with open(da_path, "w", encoding="utf-8") as f:
                       f.write(da)
-              diag("UI_DIALOGS", f"Patched {da_path}: onCreate={c_da}({st_da}), menuAdd={c_da_menu}({st_da_menu}), click={c_da_click}({st_da_click})")
+              diag("UI_DIALOGS", f"Patched {da_path}: onCreate={c_da}({st_da}), click={c_da_click}({st_da_click})")
 
           st_files = glob.glob("TMessagesProj/src/main/java/**/SettingsActivity.java", recursive=True)
           diag("UI_SETTINGS", f"Found {len(st_files)} SettingsActivity.java files: {st_files}")
@@ -1674,16 +1618,6 @@ jobs:
                   '        try { org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity()); } catch (Throwable ignored) {}',
                   "org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity())"
               )
-              st_sub_snippet = f'            try {{ if (otherItem != null) otherItem.addSubItem({notes_menu_id}, "Notes - Панель функций [v4]"); }} catch (Throwable ignored) {{}}'
-              c_st_menu = 0
-              st_st_menu = "otherItem_not_found"
-              if f"otherItem.addSubItem({notes_menu_id}" not in st and re.search(r'\botherItem\b', st):
-                  st, c_st_menu, st_st_menu = inject_at_method_start(
-                      st,
-                      r'public\s+View\s+createView\s*\([^)]*\)',
-                      st_sub_snippet,
-                      f"otherItem.addSubItem({notes_menu_id}"
-                  )
               st_click_snippet = f'        if (id == {notes_menu_id}) {{ try {{ org.telegram.messenger.LocalWhisperHelper.openNotesMainHub(getParentActivity(), 0L); }} catch (Throwable ignored) {{}} return; }}'
               st, c_st_click, st_st_click = inject_at_method_start(
                   st,
@@ -1691,10 +1625,10 @@ jobs:
                   st_click_snippet,
                   f"if (id == {notes_menu_id})"
               )
-              if (c_st + c_st_menu + c_st_click) > 0:
+              if (c_st + c_st_click) > 0:
                   with open(st_path, "w", encoding="utf-8") as f:
                       f.write(st)
-              diag("UI_SETTINGS", f"Patched {st_path}: onCreate={c_st}({st_st}), menuAdd={c_st_menu}({st_st_menu}), click={c_st_click}({st_st_click})")
+              diag("UI_SETTINGS", f"Patched {st_path}: onCreate={c_st}({st_st}), click={c_st_click}({st_st_click})")
 
           # 11. Patch SecretMediaViewer: Keep TTL Media & Save to NotesVault (unless Stock Mode or Guest Mode)
           for sm_path in glob.glob("TMessagesProj/src/main/java/**/SecretMediaViewer.java", recursive=True):
@@ -1743,7 +1677,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NotesClient-arm64-v4
+          name: NotesClient-arm64-v5
           path: |
             TMessagesProj_App/build/outputs/apk/**/*.apk
-            v4_diagnostics/patch_report.log
+            v5_diagnostics/patch_report.log
