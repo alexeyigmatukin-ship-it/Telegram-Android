@@ -1,4 +1,4 @@
-name: Build Custom Stealth Client APK v9
+name: Build Custom Stealth Client APK v10
 
 on:
   workflow_dispatch:
@@ -46,13 +46,13 @@ jobs:
           if [ -n "$KEYSTORE_B64" ]; then
             echo "$KEYSTORE_B64" | tr -d '[:space:]' | base64 -d > "$KS_PATH" || true
             if keytool -list -keystore "$KS_PATH" -storepass "$STORE_PASS" -alias "$KEY_ALIAS" >/dev/null 2>&1; then
-              echo "[v9][KEYSTORE] Decoded keystore verified successfully for alias '$KEY_ALIAS'."
+              echo "[v10][KEYSTORE] Decoded keystore verified successfully for alias '$KEY_ALIAS'."
               VALID_KS=1
             else
-              echo "[v9][KEYSTORE] Warning: Provided keystore or alias '$KEY_ALIAS' failed verification."
+              echo "[v10][KEYSTORE] Warning: Provided keystore or alias '$KEY_ALIAS' failed verification."
               DETECTED_ALIAS=$(keytool -list -keystore "$KS_PATH" -storepass "$STORE_PASS" 2>/dev/null | grep -E "PrivateKeyEntry|keyEntry" | head -n 1 | cut -d',' -f1 | tr -d '[:space:]')
               if [ -n "$DETECTED_ALIAS" ]; then
-                echo "[v9][KEYSTORE] Auto-detected alias inside keystore: $DETECTED_ALIAS"
+                echo "[v10][KEYSTORE] Auto-detected alias inside keystore: $DETECTED_ALIAS"
                 KEY_ALIAS="$DETECTED_ALIAS"
                 VALID_KS=1
               fi
@@ -60,7 +60,7 @@ jobs:
           fi
 
           if [ "$VALID_KS" -eq 0 ]; then
-            echo "[v9][KEYSTORE] Generating fresh fallback release keystore..."
+            echo "[v10][KEYSTORE] Generating fresh fallback release keystore..."
             rm -f "$KS_PATH"
             STORE_PASS="android123"
             KEY_ALIAS="telegram"
@@ -90,30 +90,30 @@ jobs:
 
           if not os.path.exists(model_path):
               try:
-                  print("[v9][WHISPER] Downloading Russian-capable local Whisper model (ggml-small-q5_1.bin)...")
+                  print("[v10][WHISPER] Downloading Russian-capable local Whisper model (ggml-small-q5_1.bin)...")
                   req = urllib.request.Request(model_url, headers={"User-Agent": "Mozilla/5.0"})
                   with urllib.request.urlopen(req, timeout=120) as resp, open(model_path, "wb") as out:
                       out.write(resp.read())
-                  print(f"[v9][WHISPER] Downloaded model to {model_path} ({os.path.getsize(model_path)} bytes)")
+                  print(f"[v10][WHISPER] Downloaded model to {model_path} ({os.path.getsize(model_path)} bytes)")
               except Exception as e:
-                  print(f"[v9][WHISPER][WARN] Could not pre-download Whisper model during build ({e}).")
+                  print(f"[v10][WHISPER][WARN] Could not pre-download Whisper model during build ({e}).")
           else:
-              print(f"[v9][WHISPER] Model already present at {model_path} ({os.path.getsize(model_path)} bytes)")
+              print(f"[v10][WHISPER] Model already present at {model_path} ({os.path.getsize(model_path)} bytes)")
           EOF
 
-      - name: Apply Stealth, Anti-Delete, Secret Media, Local RU Whisper, Local Premium, Guest Mode & Animated TG Theme Studio (v9)
+      - name: Apply Stealth, Anti-Delete, Secret Media, Local RU Whisper, Local Premium, Guest Mode & Animated TG Theme Studio (v10)
         env:
           RAW_API_ID: ${{ secrets.TG_API_ID }}
           RAW_API_HASH: ${{ secrets.TG_API_HASH }}
           NEW_PKG: "com.alexey.notesclient"
           NEW_NAME: "Notes"
         run: |
-          mkdir -p v9_diagnostics
-          python3 - << 'EOF' | tee v9_diagnostics/patch_report.log
+          mkdir -p v10_diagnostics
+          python3 - << 'EOF' | tee v10_diagnostics/patch_report.log
           import os, re, glob, json, copy, sys
 
           def diag(tag, msg):
-              print(f"[v9][{tag}] {msg}", flush=True)
+              print(f"[v10][{tag}] {msg}", flush=True)
 
           def find_matching_brace(text, open_brace_idx):
               depth = 0
@@ -155,6 +155,33 @@ jobs:
                   return src, 0, "no_open_brace"
               return src[:brace_idx + 1] + "\n" + snippet + "\n" + src[brace_idx + 1:], 1, "injected_at_start"
 
+          def inject_at_all_methods_start(src, method_pattern, snippet_builder, marker_prefix):
+              count = 0
+              pos = 0
+              while True:
+                  m = re.search(method_pattern, src[pos:])
+                  if not m:
+                      break
+                  abs_start = pos + m.start()
+                  abs_end = pos + m.end()
+                  sig = src[abs_start:abs_end]
+                  brace_idx = src.find("{", abs_end - 1)
+                  if brace_idx == -1:
+                      pos = abs_end
+                      continue
+                  marker = f"{marker_prefix}_{count}"
+                  if marker in src[brace_idx:brace_idx + 600]:
+                      pos = brace_idx + 1
+                      continue
+                  snippet = snippet_builder(sig, marker)
+                  if snippet:
+                      src = src[:brace_idx + 1] + "\n" + snippet + "\n" + src[brace_idx + 1:]
+                      count += 1
+                      pos = brace_idx + len(snippet) + 2
+                  else:
+                      pos = brace_idx + 1
+              return src, count
+
           def inject_after_statement_in_method(src, method_pattern, stmt_pattern, snippet, marker):
               if marker in src:
                   return src, 1, "already_present"
@@ -174,13 +201,43 @@ jobs:
               insert_pos = brace_idx + sm.end()
               return src[:insert_pos] + "\n" + snippet + "\n" + src[insert_pos:], 1, "injected_after_stmt"
 
+          def parse_java_params(sig):
+              p_start = sig.find("(")
+              p_end = sig.rfind(")")
+              if p_start == -1 or p_end == -1 or p_end <= p_start + 1:
+                  return []
+              raw = sig[p_start + 1:p_end]
+              parts = []
+              depth = 0
+              cur = []
+              for ch in raw:
+                  if ch == '<':
+                      depth += 1
+                      cur.append(ch)
+                  elif ch == '>':
+                      depth = max(0, depth - 1)
+                      cur.append(ch)
+                  elif ch == ',' and depth == 0:
+                      parts.append("".join(cur).strip())
+                      cur = []
+                  else:
+                      cur.append(ch)
+              if cur:
+                  parts.append("".join(cur).strip())
+              res = []
+              for p in parts:
+                  tokens = [t for t in p.replace("final ", "").strip().split() if t]
+                  if len(tokens) >= 2:
+                      res.append((" ".join(tokens[:-1]), tokens[-1]))
+              return res
+
           raw_api_id = os.environ.get("RAW_API_ID", "").strip()
           api_id = raw_api_id if raw_api_id.isdigit() else "2040"
           api_hash = os.environ.get("RAW_API_HASH", "").strip() or "b18441a1ff607e10a989891a5462e627"
           new_pkg = os.environ.get("NEW_PKG", "com.alexey.notesclient").strip()
           new_name = os.environ.get("NEW_NAME", "Notes").strip()
 
-          diag("DIAG", f"Workflow version: v9 | target pkg={new_pkg} | name={new_name}")
+          diag("DIAG", f"Workflow version: v10 | target pkg={new_pkg} | name={new_name}")
           diag("DIAG", f"Exists TMessagesProj={os.path.isdir('TMessagesProj')} | TMessagesProj_App={os.path.isdir('TMessagesProj_App')}")
 
           # 0. Maven Central Mirror fallback to avoid HTTP 429
@@ -375,7 +432,7 @@ jobs:
               with open(xml_path, "w", encoding="utf-8") as f:
                   f.write(xml)
 
-          # 7. CustomConfig with explicit Anti-Delete & Save Secret Media toggles
+          # 7. CustomConfig
           h_dir = "TMessagesProj/src/main/java/org/telegram/messenger"
           os.makedirs(h_dir, exist_ok=True)
           custom_cfg_code = """package org.telegram.messenger;
@@ -432,7 +489,7 @@ jobs:
               }
 
               public static boolean isSaveDeletedEnabled(long dialogId) {
-                  if (isStockMode(dialogId)) return false;
+                  if (dialogId != 0L && isStockMode(dialogId)) return false;
                   return getPrefs().getBoolean("save_deleted_msgs", true);
               }
 
@@ -441,7 +498,7 @@ jobs:
               }
 
               public static boolean isSaveSecretMediaEnabled(long dialogId) {
-                  if (isStockMode(dialogId) || isGuestHandoverActive()) return false;
+                  if ((dialogId != 0L && isStockMode(dialogId)) || isGuestHandoverActive()) return false;
                   return getPrefs().getBoolean("save_secret_media", true);
               }
 
@@ -454,7 +511,7 @@ jobs:
               }
 
               public static boolean isGhostRead(long dialogId) {
-                  if (isStockMode(dialogId) || isGuestHandoverActive()) return false;
+                  if ((dialogId != 0L && isStockMode(dialogId)) || isGuestHandoverActive()) return false;
                   return getPrefs().getBoolean("ghost_read", false);
               }
 
@@ -463,7 +520,7 @@ jobs:
               }
 
               public static boolean isNoTyping(long dialogId) {
-                  if (isStockMode(dialogId) || isGuestHandoverActive()) return false;
+                  if ((dialogId != 0L && isStockMode(dialogId)) || isGuestHandoverActive()) return false;
                   return getPrefs().getBoolean("no_typing", false);
               }
 
@@ -683,7 +740,9 @@ jobs:
                   if (!isSaveDeletedEnabled(dialogId)) return;
                   Set<String> set = getDeletedSet();
                   set.add(dialogId + "_" + msgId);
-                  set.add("0_" + msgId);
+                  if (msgId != 0) {
+                      set.add("0_" + msgId);
+                  }
                   getPrefs().edit().putStringSet("deleted_msgs_set", new HashSet<>(set)).apply();
               }
 
@@ -725,7 +784,7 @@ jobs:
               f.write(custom_cfg_code)
           diag("CUSTOMCFG", f"Wrote {h_dir}/CustomConfig.java")
 
-          # 8. LocalWhisperHelper with Anti-Delete & Secret Media switches in Notes Hub
+          # 8. LocalWhisperHelper (with direct MessageObject vault & transcription helpers)
           whisper_lines = [
               "package org.telegram.messenger;",
               "import android.animation.ArgbEvaluator;",
@@ -763,6 +822,7 @@ jobs:
               "import android.widget.SeekBar;",
               "import android.widget.Switch;",
               "import android.widget.TextView;",
+              "import android.widget.Toast;",
               "import androidx.core.content.FileProvider;",
               "import java.io.ByteArrayOutputStream;",
               "import java.io.File;",
@@ -770,6 +830,7 @@ jobs:
               "import java.io.FileOutputStream;",
               "import java.nio.ByteBuffer;",
               "import java.nio.ByteOrder;",
+              "import org.telegram.ui.LaunchActivity;",
               "public class LocalWhisperHelper {",
               "  private static final String MODEL_ASSET_PATH = \"whisper/ggml-small-q5_1.bin\";",
               "  private static int dp(Context ctx, float value) {",
@@ -1405,6 +1466,38 @@ jobs:
               "      if (cm != null) cm.setPrimaryClip(ClipData.newPlainText(label != null ? label : \"Notes\", text));",
               "    } catch (Throwable ignored) {}",
               "  }",
+              "  public static String resolveMessageMediaPath(int account, MessageObject msgObj) {",
+              "    try {",
+              "      if (msgObj == null) return null;",
+              "      if (msgObj.messageOwner != null && !TextUtils.isEmpty(msgObj.messageOwner.attachPath)) {",
+              "        File f1 = new File(msgObj.messageOwner.attachPath);",
+              "        if (f1.exists() && f1.canRead()) return f1.getAbsolutePath();",
+              "      }",
+              "      if (msgObj.messageOwner != null) {",
+              "        File f2 = FileLoader.getInstance(account).getPathToMessage(msgObj.messageOwner);",
+              "        if (f2 != null && f2.exists() && f2.canRead()) return f2.getAbsolutePath();",
+              "      }",
+              "      if (msgObj.getDocument() != null) {",
+              "        File f3 = FileLoader.getInstance(account).getPathToAttach(msgObj.getDocument(), true);",
+              "        if (f3 != null && f3.exists() && f3.canRead()) return f3.getAbsolutePath();",
+              "      }",
+              "    } catch (Throwable ignored) {}",
+              "    return null;",
+              "  }",
+              "  public static void saveSecretMessageObjectToVault(int account, MessageObject msgObj) {",
+              "    try {",
+              "      if (msgObj == null) return;",
+              "      long did = msgObj.getDialogId();",
+              "      if (!CustomConfig.isSaveSecretMediaEnabled(did)) return;",
+              "      String path = resolveMessageMediaPath(account, msgObj);",
+              "      if (TextUtils.isEmpty(path)) return;",
+              "      boolean isVid = msgObj.isVideo() || msgObj.isRoundVideo() || path.toLowerCase().endsWith(\".mp4\");",
+              "      File saved = saveSecretMediaToVault(path, isVid);",
+              "      if (saved != null && ApplicationLoader.applicationContext != null) {",
+              "        Toast.makeText(ApplicationLoader.applicationContext, \"Сохранено в NotesVault\", Toast.LENGTH_SHORT).show();",
+              "      }",
+              "    } catch (Throwable ignored) {}",
+              "  }",
               "  public static File saveSecretMediaToVault(String sourcePath, boolean isVideo) {",
               "    try {",
               "      if (!CustomConfig.isSaveSecretMediaEnabled(0L) || TextUtils.isEmpty(sourcePath)) return null;",
@@ -1479,6 +1572,22 @@ jobs:
               "    header.putInt(sampleRate); header.putInt(byteRate); header.putShort((short) blockAlign); header.putShort((short) bitsPerSample);",
               "    header.put(new byte[] {'d', 'a', 't', 'a'}); header.putInt(pcmBytes); out.write(header.array());",
               "  }",
+              "  public static boolean handleTranscribeMessageObject(int account, MessageObject msgObj) {",
+              "    try {",
+              "      if (msgObj == null || !CustomConfig.isLocalWhisperRu()) return false;",
+              "      long did = msgObj.getDialogId();",
+              "      if (CustomConfig.isStockMode(did)) return false;",
+              "      Activity act = LaunchActivity.instance;",
+              "      if (act == null) return false;",
+              "      String path = resolveMessageMediaPath(account, msgObj);",
+              "      if (TextUtils.isEmpty(path)) {",
+              "        Toast.makeText(act, \"Сначала загрузите голосовое/кружок\", Toast.LENGTH_SHORT).show();",
+              "        return true;",
+              "      }",
+              "      transcribeAudioOrRound(act, did, path, msgObj.isRoundVideo());",
+              "      return true;",
+              "    } catch (Throwable ignored) { return false; }",
+              "  }",
               "  public static void transcribeAudioOrRound(Activity activity, long dialogId, String mediaPath, boolean isRoundVideo) {",
               "    if (activity == null || CustomConfig.isStockMode(dialogId)) return;",
               "    try {",
@@ -1502,35 +1611,93 @@ jobs:
               f.write("\n".join(whisper_lines) + "\n")
           diag("WHISPER", f"Wrote {h_dir}/LocalWhisperHelper.java ({len(whisper_lines)} lines)")
 
-          # 9. Patch MessagesController & MessagesStorage (Anti-Delete, Ghost Read, No Typing)
+          # 9. Patch MessagesController, MessagesStorage, SecretMediaViewer, TranscribeButton & UserConfig
+          def build_delete_guard(sig, marker):
+              params = parse_java_params(sig)
+              did_expr = "0L"
+              ids_expr = None
+              for p_type, p_name in params:
+                  if p_type == "long" and did_expr == "0L":
+                      did_expr = p_name
+                  elif "ArrayList<Integer>" in p_type or "List<Integer>" in p_type:
+                      ids_expr = p_name
+              lines = [f"        // {marker}"]
+              lines.append("        if (org.telegram.messenger.CustomConfig.isGuestHandoverActive()) return;")
+              if ids_expr:
+                  lines.append(f"        try {{ if (org.telegram.messenger.CustomConfig.isSaveDeletedEnabled({did_expr})) {{ org.telegram.messenger.CustomConfig.markDeletedBatch({did_expr}, {ids_expr}); return; }} }} catch (Throwable ignored) {{}}")
+              else:
+                  lines.append(f"        try {{ if (org.telegram.messenger.CustomConfig.isSaveDeletedEnabled({did_expr})) {{ org.telegram.messenger.CustomConfig.markDeletedLocally({did_expr}, 0); return; }} }} catch (Throwable ignored) {{}}")
+              return "\n".join(lines)
+
+          def build_read_guard(sig, marker):
+              params = parse_java_params(sig)
+              did_expr = "0L"
+              for p_type, p_name in params:
+                  if p_type == "long" and ("did" in p_name.lower() or "dialog" in p_name.lower() or "peer" in p_name.lower() or did_expr == "0L"):
+                      did_expr = p_name
+                      break
+              return f"        // {marker}\n        if (org.telegram.messenger.CustomConfig.isGhostRead({did_expr})) return;"
+
+          def build_typing_guard(sig, marker):
+              params = parse_java_params(sig)
+              did_expr = "0L"
+              for p_type, p_name in params:
+                  if p_type == "long":
+                      did_expr = p_name
+                      break
+              return f"        // {marker}\n        if (org.telegram.messenger.CustomConfig.isNoTyping({did_expr})) return;"
+
           for mc_path in glob.glob("TMessagesProj/src/main/java/**/MessagesController.java", recursive=True):
               try:
                   with open(mc_path, "r", encoding="utf-8") as f:
                       mc = f.read()
               except Exception:
                   continue
-              mc_new, c_del, st_del = inject_at_method_start(
+              mc, c_del = inject_at_all_methods_start(
                   mc,
-                  r'public\s+void\s+deleteMessages\s*\([^)]*\)',
-                  '        if (org.telegram.messenger.CustomConfig.isGuestHandoverActive()) return;\n        try { org.telegram.messenger.CustomConfig.markDeletedLocally(0L, 0); } catch (Throwable ignored) {}',
-                  "org.telegram.messenger.CustomConfig.markDeletedLocally(0L, 0)"
+                  r'(?:public|private|protected)\s+void\s+deleteMessages\s*\([^)]*\)',
+                  build_delete_guard,
+                  "NOTES_DEL_GUARD"
               )
-              mc_new, c_typ, st_typ = inject_at_method_start(
-                  mc_new,
+              mc, c_rd1 = inject_at_all_methods_start(
+                  mc,
+                  r'(?:public|private|protected)\s+void\s+markDialogAsRead\s*\([^)]*\)',
+                  build_read_guard,
+                  "NOTES_READ_GUARD"
+              )
+              mc, c_rd2 = inject_at_all_methods_start(
+                  mc,
+                  r'(?:public|private|protected)\s+void\s+markMessageContentAsRead\s*\([^)]*\)',
+                  build_read_guard,
+                  "NOTES_READ_CONTENT_GUARD"
+              )
+              mc, c_typ = inject_at_all_methods_start(
+                  mc,
                   r'(?:public|private|protected)\s+void\s+sendTyping\s*\([^)]*\)',
-                  '        if (org.telegram.messenger.CustomConfig.isNoTyping(0L)) return;',
-                  "org.telegram.messenger.CustomConfig.isNoTyping(0L)"
+                  build_typing_guard,
+                  "NOTES_TYPING_GUARD"
               )
-              mc_new, c_rd, st_rd = inject_at_method_start(
-                  mc_new,
-                  r'public\s+void\s+markDialogAsRead\s*\([^)]*\)',
-                  '        if (org.telegram.messenger.CustomConfig.isGhostRead(0L)) return;',
-                  "org.telegram.messenger.CustomConfig.isGhostRead(0L)"
-              )
-              if (c_del + c_typ + c_rd) > 0:
+              if (c_del + c_rd1 + c_rd2 + c_typ) > 0:
                   with open(mc_path, "w", encoding="utf-8") as f:
-                      f.write(mc_new)
-              diag("MSG_CTRL", f"Patched {mc_path} del={c_del}({st_del}) typ={c_typ}({st_typ}) read={c_rd}({st_rd})")
+                      f.write(mc)
+              diag("MSG_CTRL", f"Patched {mc_path} del={c_del} readDialog={c_rd1} readContent={c_rd2} typing={c_typ}")
+
+          def build_storage_del_guard(sig, marker):
+              params = parse_java_params(sig)
+              did_expr = "0L"
+              ids_expr = None
+              for p_type, p_name in params:
+                  if p_type == "long" and did_expr == "0L":
+                      did_expr = p_name
+                  elif "ArrayList<Integer>" in p_type or "List<Integer>" in p_type:
+                      ids_expr = p_name
+              ret_stmt = "return;" if " void " in sig else ("return new java.util.ArrayList<>();" if "ArrayList" in sig else ("return 0;" if " int " in sig else "return false;"))
+              lines = [f"        // {marker}"]
+              if ids_expr:
+                  lines.append(f"        try {{ if (org.telegram.messenger.CustomConfig.isSaveDeletedEnabled({did_expr})) {{ org.telegram.messenger.CustomConfig.markDeletedBatch({did_expr}, {ids_expr}); {ret_stmt} }} }} catch (Throwable ignored) {{}}")
+              else:
+                  lines.append(f"        try {{ if (org.telegram.messenger.CustomConfig.isSaveDeletedEnabled({did_expr})) {{ org.telegram.messenger.CustomConfig.markDeletedLocally({did_expr}, 0); {ret_stmt} }} }} catch (Throwable ignored) {{}}")
+              return "\n".join(lines)
 
           for ms_path in glob.glob("TMessagesProj/src/main/java/**/MessagesStorage.java", recursive=True):
               try:
@@ -1538,23 +1705,16 @@ jobs:
                       ms = f.read()
               except Exception:
                   continue
-              ms_new, c_ms, st_ms = inject_at_method_start(
+              ms, c_ms = inject_at_all_methods_start(
                   ms,
-                  r'(?:public|private|protected)\s+void\s+markMessagesAsDeleted\s*\([^)]*\)',
-                  '        try { if (org.telegram.messenger.CustomConfig.isSaveDeletedEnabled(0L)) { org.telegram.messenger.CustomConfig.markDeletedLocally(0L, 0); return; } } catch (Throwable ignored) {}',
-                  "org.telegram.messenger.CustomConfig.isSaveDeletedEnabled(0L)"
+                  r'(?:public|private|protected)\s+(?:void|ArrayList<[^>]+>|int|boolean)\s+markMessagesAsDeleted\s*\([^)]*\)',
+                  build_storage_del_guard,
+                  "NOTES_STORAGE_DEL_GUARD"
               )
-              if c_ms == 0:
-                  ms_new, c_ms, st_ms = inject_at_method_start(
-                      ms,
-                      r'(?:public|private|protected)\s+(?:ArrayList<[^>]+>|int|boolean)\s+markMessagesAsDeleted\s*\([^)]*\)',
-                      '        try { if (org.telegram.messenger.CustomConfig.isSaveDeletedEnabled(0L)) { org.telegram.messenger.CustomConfig.markDeletedLocally(0L, 0); } } catch (Throwable ignored) {}',
-                      "org.telegram.messenger.CustomConfig.isSaveDeletedEnabled(0L)"
-                  )
               if c_ms > 0:
                   with open(ms_path, "w", encoding="utf-8") as f:
-                      f.write(ms_new)
-              diag("MSG_STORAGE", f"Patched {ms_path} del={c_ms}({st_ms})")
+                      f.write(ms)
+              diag("MSG_STORAGE", f"Patched {ms_path} markMessagesAsDeleted={c_ms}")
 
           for sm_path in glob.glob("TMessagesProj/src/main/java/**/SecretMediaViewer.java", recursive=True):
               try:
@@ -1562,22 +1722,83 @@ jobs:
                       sm = f.read()
               except Exception:
                   continue
-              sm_new, c_sm, st_sm = inject_at_method_start(
+              sm, c_sm, st_sm = inject_at_method_start(
                   sm,
                   r'(?:public|private|protected)\s+void\s+openMedia\s*\([^)]*\)',
-                  '        try { if (org.telegram.messenger.CustomConfig.isSaveSecretMediaEnabled(0L) && currentMessageObject != null && currentMessageObject.messageOwner != null && currentMessageObject.messageOwner.attachPath != null) { org.telegram.messenger.LocalWhisperHelper.saveSecretMediaToVault(currentMessageObject.messageOwner.attachPath, currentMessageObject.isVideo()); } } catch (Throwable ignored) {}',
-                  "org.telegram.messenger.CustomConfig.isSaveSecretMediaEnabled(0L)"
+                  '        try { if (currentMessageObject != null) { org.telegram.messenger.LocalWhisperHelper.saveSecretMessageObjectToVault(currentAccount, currentMessageObject); } } catch (Throwable ignored) {}',
+                  "org.telegram.messenger.LocalWhisperHelper.saveSecretMessageObjectToVault"
               )
               if c_sm > 0:
                   with open(sm_path, "w", encoding="utf-8") as f:
-                      f.write(sm_new)
+                      f.write(sm)
               diag("SECRET_MEDIA", f"Patched {sm_path} openMedia={c_sm}({st_sm})")
 
+          # 9B. Local Transcription Override (bypass Premium paywall on voice/round transcription)
+          transcribe_hooks = 0
+          for tb_path in glob.glob("TMessagesProj/src/main/java/**/TranscribeButton.java", recursive=True):
+              try:
+                  with open(tb_path, "r", encoding="utf-8") as f:
+                      tb = f.read()
+              except Exception:
+                  continue
+              tb_new, c_tb1 = inject_at_all_methods_start(
+                  tb,
+                  r'(?:public|private|protected)\s+void\s+onTap\s*\([^)]*\)',
+                  lambda sig, mk: f"        // {mk}\n        try {{ if (parent != null && parent.getMessageObject() != null && org.telegram.messenger.LocalWhisperHelper.handleTranscribeMessageObject(org.telegram.messenger.UserConfig.selectedAccount, parent.getMessageObject())) return; }} catch (Throwable ignored) {{}}",
+                  "NOTES_TRANSCRIBE_TAP"
+              )
+              tb_new, c_tb2 = inject_at_all_methods_start(
+                  tb_new,
+                  r'(?:public|private|protected)\s+void\s+transcribePressed\s*\([^)]*\)',
+                  lambda sig, mk: f"        // {mk}\n        try {{ if (parent != null && parent.getMessageObject() != null && org.telegram.messenger.LocalWhisperHelper.handleTranscribeMessageObject(org.telegram.messenger.UserConfig.selectedAccount, parent.getMessageObject())) return; }} catch (Throwable ignored) {{}}",
+                  "NOTES_TRANSCRIBE_PRESSED"
+              )
+              if (c_tb1 + c_tb2) > 0:
+                  with open(tb_path, "w", encoding="utf-8") as f:
+                      f.write(tb_new)
+                  transcribe_hooks += (c_tb1 + c_tb2)
+              diag("TRANSCRIBE_BTN", f"Patched {tb_path} onTap={c_tb1} transcribePressed={c_tb2}")
+
+          for mdc_path in glob.glob("TMessagesProj/src/main/java/**/MediaDataController.java", recursive=True):
+              try:
+                  with open(mdc_path, "r", encoding="utf-8") as f:
+                      mdc = f.read()
+              except Exception:
+                  continue
+              mdc_new, c_mdc = inject_at_all_methods_start(
+                  mdc,
+                  r'(?:public|private|protected)\s+void\s+transcribeAudio\s*\([^)]*\)',
+                  lambda sig, mk: f"        // {mk}\n        try {{ if (messageObject != null && org.telegram.messenger.LocalWhisperHelper.handleTranscribeMessageObject(currentAccount, messageObject)) return; }} catch (Throwable ignored) {{}}",
+                  "NOTES_MDC_TRANSCRIBE"
+              )
+              if c_mdc > 0:
+                  with open(mdc_path, "w", encoding="utf-8") as f:
+                      f.write(mdc_new)
+                  transcribe_hooks += c_mdc
+              diag("MEDIA_CTRL", f"Patched {mdc_path} transcribeAudio={c_mdc}")
+
+          for uc_path in glob.glob("TMessagesProj/src/main/java/**/UserConfig.java", recursive=True):
+              try:
+                  with open(uc_path, "r", encoding="utf-8") as f:
+                      uc = f.read()
+              except Exception:
+                  continue
+              uc_new, c_uc, st_uc = inject_at_method_start(
+                  uc,
+                  r'public\s+boolean\s+isPremium\s*\(\s*\)',
+                  '        if (org.telegram.messenger.CustomConfig.isLocalPremiumEnabled()) return true;',
+                  "org.telegram.messenger.CustomConfig.isLocalPremiumEnabled()"
+              )
+              if c_uc > 0:
+                  with open(uc_path, "w", encoding="utf-8") as f:
+                      f.write(uc_new)
+              diag("USER_CFG", f"Patched {uc_path} isPremium={c_uc}({st_uc})")
+
           # 10. Direct OnClickListener UI Hooks in SettingsActivity, ChatActivity & DialogsActivity
-          notes_menu_id = 99109
+          notes_menu_id = 99110
           ui_hooks_ok = 0
 
-          # 10A. SettingsActivity
+          # 10A. SettingsActivity (multiple anchor fallbacks so it injects 3/3)
           for st_path in glob.glob("TMessagesProj/src/main/java/**/SettingsActivity.java", recursive=True):
               try:
                   with open(st_path, "r", encoding="utf-8") as f:
@@ -1595,7 +1816,7 @@ jobs:
                           if (actionBar != null) {{
                               org.telegram.ui.ActionBar.ActionBarMenu notesTopMenu = actionBar.createMenu();
                               if (notesTopMenu != null) {{
-                                  org.telegram.ui.ActionBar.ActionBarMenuItem notesBtn = notesTopMenu.addItem({notes_menu_id}, org.telegram.messenger.R.drawable.ic_ab_other);
+                                  org.telegram.ui.ActionBar.ActionBarMenuItem notesBtn = notesTopMenu.addItem({notes_menu_id}, org.telegram.messenger.R.drawable.msg_settings);
                                   notesBtn.setContentDescription("Notes");
                                   notesBtn.setOnClickListener(new android.view.View.OnClickListener() {{
                                       @Override
@@ -1607,29 +1828,23 @@ jobs:
                           }}
                       }} catch (Throwable ignored) {{}}
               """
-              st, c_st_menu, st_st_menu = inject_after_statement_in_method(
-                  st,
-                  r'public\s+View\s+createView\s*\([^)]*\)',
+              c_st_menu = 0
+              st_st_menu = "stmt_not_found"
+              for anchor_pat in [
                   r'actionBar\.setActionBarMenuOnItemClick\s*\([^;]*\)\s*;',
-                  st_menu_snippet,
-                  f"notesTopMenu.addItem({notes_menu_id}"
-              )
-              if c_st_menu == 0:
+                  r'otherItem\s*=\s*menu\.addItem\s*\([^;]*\)\s*;',
+                  r'actionBar\.setBackButtonImage\s*\([^;]*\)\s*;',
+                  r'super\.createView\s*\([^)]*\)\s*;'
+              ]:
                   st, c_st_menu, st_st_menu = inject_after_statement_in_method(
                       st,
                       r'public\s+View\s+createView\s*\([^)]*\)',
-                      r'super\.createView\s*\([^)]*\)\s*;',
+                      anchor_pat,
                       st_menu_snippet,
                       f"notesTopMenu.addItem({notes_menu_id}"
                   )
-              if c_st_menu == 0:
-                  st, c_st_menu, st_st_menu = inject_after_statement_in_method(
-                      st,
-                      r'public\s+View\s+createView\s*\([^)]*\)',
-                      r'actionBar\.createMenu\s*\(\s*\)\s*;',
-                      st_menu_snippet,
-                      f"notesTopMenu.addItem({notes_menu_id}"
-                  )
+                  if c_st_menu > 0:
+                      break
               if (c_st_cr + c_st_menu) > 0:
                   with open(st_path, "w", encoding="utf-8") as f:
                       f.write(st)
@@ -1722,7 +1937,7 @@ jobs:
                   ui_hooks_ok += 1
               diag("UI_DIALOGS", f"Patched {da_path}: onCreate={c_da_cr}({st_da_cr}), directMenu={c_da_menu}({st_da_menu})")
 
-          diag("UI_GATE", f"Active direct-click UI entry points injected: {ui_hooks_ok}/3")
+          diag("UI_GATE", f"Active direct-click UI entry points injected: {ui_hooks_ok}/3 | transcribeHooks={transcribe_hooks}")
           if ui_hooks_ok == 0:
               diag("FATAL", "No UI entry points were injected! Stopping early before Gradle.")
               sys.exit(1)
@@ -1751,11 +1966,11 @@ jobs:
           "$AAPT" dump badging "$APK_PATH" | grep -q "package: name='com.alexey.notesclient'"
           "$APKSIGNER" verify --verbose --print-certs "$APK_PATH"
 
-      - name: Upload APK & v9 Diagnostics
+      - name: Upload APK & v10 Diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NotesClient-arm64-v9
+          name: NotesClient-arm64-v10
           path: |
             TMessagesProj_App/build/outputs/apk/**/*.apk
-            v9_diagnostics/patch_report.log
+            v10_diagnostics/patch_report.log
