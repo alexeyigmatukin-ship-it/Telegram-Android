@@ -1,4 +1,4 @@
-name: Build Custom Stealth Client APK v3
+name: Build Custom Stealth Client APK v9
 
 on:
   workflow_dispatch:
@@ -46,13 +46,13 @@ jobs:
           if [ -n "$KEYSTORE_B64" ]; then
             echo "$KEYSTORE_B64" | tr -d '[:space:]' | base64 -d > "$KS_PATH" || true
             if keytool -list -keystore "$KS_PATH" -storepass "$STORE_PASS" -alias "$KEY_ALIAS" >/dev/null 2>&1; then
-              echo "[v3][KEYSTORE] Decoded keystore verified successfully for alias '$KEY_ALIAS'."
+              echo "[v9][KEYSTORE] Decoded keystore verified successfully for alias '$KEY_ALIAS'."
               VALID_KS=1
             else
-              echo "[v3][KEYSTORE] Warning: Provided keystore or alias '$KEY_ALIAS' failed verification."
+              echo "[v9][KEYSTORE] Warning: Provided keystore or alias '$KEY_ALIAS' failed verification."
               DETECTED_ALIAS=$(keytool -list -keystore "$KS_PATH" -storepass "$STORE_PASS" 2>/dev/null | grep -E "PrivateKeyEntry|keyEntry" | head -n 1 | cut -d',' -f1 | tr -d '[:space:]')
               if [ -n "$DETECTED_ALIAS" ]; then
-                echo "[v3][KEYSTORE] Auto-detected alias inside keystore: $DETECTED_ALIAS"
+                echo "[v9][KEYSTORE] Auto-detected alias inside keystore: $DETECTED_ALIAS"
                 KEY_ALIAS="$DETECTED_ALIAS"
                 VALID_KS=1
               fi
@@ -60,7 +60,7 @@ jobs:
           fi
 
           if [ "$VALID_KS" -eq 0 ]; then
-            echo "[v3][KEYSTORE] Generating fresh fallback release keystore..."
+            echo "[v9][KEYSTORE] Generating fresh fallback release keystore..."
             rm -f "$KS_PATH"
             STORE_PASS="android123"
             KEY_ALIAS="telegram"
@@ -90,30 +90,30 @@ jobs:
 
           if not os.path.exists(model_path):
               try:
-                  print("[v3][WHISPER] Downloading Russian-capable local Whisper model (ggml-small-q5_1.bin)...")
+                  print("[v9][WHISPER] Downloading Russian-capable local Whisper model (ggml-small-q5_1.bin)...")
                   req = urllib.request.Request(model_url, headers={"User-Agent": "Mozilla/5.0"})
                   with urllib.request.urlopen(req, timeout=120) as resp, open(model_path, "wb") as out:
                       out.write(resp.read())
-                  print(f"[v3][WHISPER] Downloaded model to {model_path} ({os.path.getsize(model_path)} bytes)")
+                  print(f"[v9][WHISPER] Downloaded model to {model_path} ({os.path.getsize(model_path)} bytes)")
               except Exception as e:
-                  print(f"[v3][WHISPER][WARN] Could not pre-download Whisper model during build ({e}).")
+                  print(f"[v9][WHISPER][WARN] Could not pre-download Whisper model during build ({e}).")
           else:
-              print(f"[v3][WHISPER] Model already present at {model_path} ({os.path.getsize(model_path)} bytes)")
+              print(f"[v9][WHISPER] Model already present at {model_path} ({os.path.getsize(model_path)} bytes)")
           EOF
 
-      - name: Apply Stealth, Anti-Delete, Secret Media, Local RU Whisper, Local Premium, Guest Mode & Telegram-Style Notes Hub Patches (v3)
+      - name: Apply Stealth, Anti-Delete, Secret Media, Local RU Whisper, Local Premium, Guest Mode & Animated TG Theme Studio (v9)
         env:
           RAW_API_ID: ${{ secrets.TG_API_ID }}
           RAW_API_HASH: ${{ secrets.TG_API_HASH }}
           NEW_PKG: "com.alexey.notesclient"
           NEW_NAME: "Notes"
         run: |
-          mkdir -p v3_diagnostics
-          python3 - << 'EOF' | tee v3_diagnostics/patch_report.log
-          import os, re, glob, json, copy
+          mkdir -p v9_diagnostics
+          python3 - << 'EOF' | tee v9_diagnostics/patch_report.log
+          import os, re, glob, json, copy, sys
 
           def diag(tag, msg):
-              print(f"[v3][{tag}] {msg}", flush=True)
+              print(f"[v9][{tag}] {msg}", flush=True)
 
           def find_matching_brace(text, open_brace_idx):
               depth = 0
@@ -144,9 +144,20 @@ jobs:
                   i += 1
               return -1
 
-          def inject_into_method_body(src, method_pattern, snippet, marker):
+          def inject_at_method_start(src, method_pattern, snippet, marker):
               if marker in src:
-                  return src, 0, "already_present"
+                  return src, 1, "already_present"
+              m = re.search(method_pattern, src)
+              if not m:
+                  return src, 0, "method_not_found"
+              brace_idx = src.find("{", m.end() - 1)
+              if brace_idx == -1:
+                  return src, 0, "no_open_brace"
+              return src[:brace_idx + 1] + "\n" + snippet + "\n" + src[brace_idx + 1:], 1, "injected_at_start"
+
+          def inject_after_statement_in_method(src, method_pattern, stmt_pattern, snippet, marker):
+              if marker in src:
+                  return src, 1, "already_present"
               m = re.search(method_pattern, src)
               if not m:
                   return src, 0, "method_not_found"
@@ -156,7 +167,12 @@ jobs:
               close_idx = find_matching_brace(src, brace_idx)
               if close_idx == -1:
                   return src, 0, "no_close_brace"
-              return src[:close_idx] + "\n" + snippet + "\n" + src[close_idx:], 1, "injected_before_close"
+              body = src[brace_idx:close_idx + 1]
+              sm = re.search(stmt_pattern, body)
+              if not sm:
+                  return src, 0, "stmt_not_found"
+              insert_pos = brace_idx + sm.end()
+              return src[:insert_pos] + "\n" + snippet + "\n" + src[insert_pos:], 1, "injected_after_stmt"
 
           raw_api_id = os.environ.get("RAW_API_ID", "").strip()
           api_id = raw_api_id if raw_api_id.isdigit() else "2040"
@@ -164,7 +180,7 @@ jobs:
           new_pkg = os.environ.get("NEW_PKG", "com.alexey.notesclient").strip()
           new_name = os.environ.get("NEW_NAME", "Notes").strip()
 
-          diag("DIAG", f"Workflow version: v3 | target pkg={new_pkg} | name={new_name}")
+          diag("DIAG", f"Workflow version: v9 | target pkg={new_pkg} | name={new_name}")
           diag("DIAG", f"Exists TMessagesProj={os.path.isdir('TMessagesProj')} | TMessagesProj_App={os.path.isdir('TMessagesProj_App')}")
 
           # 0. Maven Central Mirror fallback to avoid HTTP 429
@@ -190,7 +206,7 @@ jobs:
                   with open(g_file, "w", encoding="utf-8") as f:
                       f.write(new_content)
 
-          # 1. API Keys & Hardcoded APPLICATION_ID in BuildVars.java / ApplicationLoader.java
+          # 1. API Keys & Hardcoded APPLICATION_ID
           bv_path = "TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java"
           if os.path.exists(bv_path):
               with open(bv_path, "r", encoding="utf-8") as f:
@@ -201,8 +217,6 @@ jobs:
               with open(bv_path, "w", encoding="utf-8") as f:
                   f.write(bv)
               diag("BUILDVARS", f"Updated {bv_path} with pkg={new_pkg}")
-          else:
-              diag("BUILDVARS", f"MISS {bv_path}")
 
           al_path = "TMessagesProj/src/main/java/org/telegram/messenger/ApplicationLoader.java"
           if os.path.exists(al_path):
@@ -218,10 +232,8 @@ jobs:
                   with open(al_path, "w", encoding="utf-8") as f:
                       f.write(al)
                   diag("APPLOADER", f"Patched getApplicationId count={cnt}")
-          else:
-              diag("APPLOADER", f"MISS {al_path}")
 
-          # 2. Standalone Package ID, Flavor Suffixes & Authorities across Gradle & buildSrc
+          # 2. Standalone Package ID, Flavor Suffixes & Authorities
           for gf_path in glob.glob("**/*.gradle*", recursive=True) + glob.glob("buildSrc/**/*.kt", recursive=True):
               if "/build/" in gf_path or "\\build\\" in gf_path or "/.gradle/" in gf_path:
                   continue
@@ -235,11 +247,7 @@ jobs:
                   f'applicationId = "{new_pkg}"' if gf_path.endswith(".kt") or gf_path.endswith(".kts") else f'applicationId "{new_pkg}"',
                   gf
               )
-              gf_new = re.sub(
-                  r'applicationIdSuffix\s*=?\s*["\'][^"\']*["\']',
-                  '',
-                  gf_new
-              )
+              gf_new = re.sub(r'applicationIdSuffix\s*=?\s*["\'][^"\']*["\']', '', gf_new)
               for suff in ["provider", "call_provider", "notification_image_provider", "beta_provider"]:
                   gf_new = gf_new.replace(f"org.telegram.messenger.{suff}", f"{new_pkg}.{suff}")
               gf_new = gf_new.replace("org.telegram.messenger.permission.", f"{new_pkg}.permission.")
@@ -247,7 +255,7 @@ jobs:
                   with open(gf_path, "w", encoding="utf-8") as f:
                       f.write(gf_new)
 
-          # 3. Force applicationId, arm64-only ABI filter & Release Signing on TMessagesProj_App
+          # 3. Force applicationId, arm64-only ABI filter & Release Signing
           app_id_and_signing_patch = f"""
           if (project.hasProperty("android")) {{
               project.android {{
@@ -311,10 +319,10 @@ jobs:
                                   break
                   with open(gs_path, "w", encoding="utf-8") as f:
                       json.dump(gs, f, indent=2)
-              except Exception as e:
-                  diag("GOOGLESVC", f"Skip {gs_path}: {e}")
+              except Exception:
+                  pass
 
-          # 5. AndroidManifest & XML authorities/permissions/providers + Honor Magic 6 Pro Multiwindow/Aspect
+          # 5. AndroidManifest & XML authorities
           for mf_path in glob.glob("**/AndroidManifest.xml", recursive=True):
               if "/build/" in mf_path or "\\build\\" in mf_path:
                   continue
@@ -324,13 +332,8 @@ jobs:
               except Exception:
                   continue
               for suff in [
-                  "provider",
-                  "call_provider",
-                  "notification_image_provider",
-                  "beta_provider",
-                  "permission.MAPS_RECEIVE",
-                  "permission.C2D_MESSAGE",
-                  "DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+                  "provider", "call_provider", "notification_image_provider", "beta_provider",
+                  "permission.MAPS_RECEIVE", "permission.C2D_MESSAGE", "DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
               ]:
                   mf = mf.replace(f"org.telegram.messenger.{suff}", f"{new_pkg}.{suff}")
               mf = re.sub(
@@ -372,7 +375,7 @@ jobs:
               with open(xml_path, "w", encoding="utf-8") as f:
                   f.write(xml)
 
-          # 7. CustomConfig
+          # 7. CustomConfig with explicit Anti-Delete & Save Secret Media toggles
           h_dir = "TMessagesProj/src/main/java/org/telegram/messenger"
           os.makedirs(h_dir, exist_ok=True)
           custom_cfg_code = """package org.telegram.messenger;
@@ -390,17 +393,22 @@ jobs:
               private static Set<String> deletedIds = null;
               private static final Map<String, String> editedHistory = Collections.synchronizedMap(new HashMap<>());
 
-              public static final int[] SWATCH_PALETTE = new int[] {
-                  0xFF3390EC, 0xFFE11D48, 0xFF38BDF8, 0xFF10B981, 0xFFF59E0B,
-                  0xFFA855F7, 0xFFEC4899, 0xFF6366F1, 0xFFF97316, 0xFF14B8A6
+              public static final int[] TG_ACCENT_PRESETS = new int[] {
+                  0xFF3390EC, 0xFF8774E1, 0xFF2EA6FF, 0xFF28C76F, 0xFFFF9F43,
+                  0xFFEA5455, 0xFF00CFE8, 0xFFF368E0, 0xFF54A0FF, 0xFF1DD1A1
               };
 
-              public static final int[] SURFACE_PALETTE = new int[] {
-                  0xFF18222D, 0xFF0F161E, 0xFF000000, 0xFF161213, 0xFF101815, 0xFF181520
+              public static final String[] TG_ACCENT_NAMES = new String[] {
+                  "Telegram Blue", "Lavanda", "Sky Cyan", "Emerald", "Sunset Amber",
+                  "Crimson", "Aqua", "Sakura Pink", "Cobalt", "Mint"
               };
 
-              public static final int[] BUBBLE_PALETTE = new int[] {
-                  0xFF212D3B, 0xFF2B5278, 0xFF1E293B, 0xFF2A1419, 0xFF112622, 0xFF1F192E
+              public static final int[] TG_SURFACE_PRESETS = new int[] {
+                  0xFF17212B, 0xFF0E1621, 0xFF000000, 0xFF18191C, 0xFF141E26, 0xFF1B1626
+              };
+
+              public static final String[] TG_SURFACE_NAMES = new String[] {
+                  "Night Blue", "Deep Ocean", "AMOLED Black", "Graphite", "Nordic Slate", "Midnight Plum"
               };
 
               private static SharedPreferences getPrefs() {
@@ -421,6 +429,28 @@ jobs:
 
               public static void toggleStockMode(long dialogId) {
                   getPrefs().edit().putBoolean("stock_" + dialogId, !isStockMode(dialogId)).apply();
+              }
+
+              public static boolean isSaveDeletedEnabled(long dialogId) {
+                  if (isStockMode(dialogId)) return false;
+                  return getPrefs().getBoolean("save_deleted_msgs", true);
+              }
+
+              public static void toggleSaveDeleted() {
+                  getPrefs().edit().putBoolean("save_deleted_msgs", !getPrefs().getBoolean("save_deleted_msgs", true)).apply();
+              }
+
+              public static boolean isSaveSecretMediaEnabled(long dialogId) {
+                  if (isStockMode(dialogId) || isGuestHandoverActive()) return false;
+                  return getPrefs().getBoolean("save_secret_media", true);
+              }
+
+              public static void toggleSaveSecretMedia() {
+                  getPrefs().edit().putBoolean("save_secret_media", !getPrefs().getBoolean("save_secret_media", true)).apply();
+              }
+
+              public static int getSavedDeletedCount() {
+                  return getDeletedSet().size();
               }
 
               public static boolean isGhostRead(long dialogId) {
@@ -556,19 +586,19 @@ jobs:
               }
 
               public static int getSurfaceColor() {
-                  return getPrefs().getInt("custom_surface_color", 0xFF18222D);
+                  return getPrefs().getInt("custom_surface_color", 0xFF17212B);
               }
 
               public static void setSurfaceColor(int color) {
                   getPrefs().edit().putInt("custom_surface_color", color).apply();
               }
 
-              public static int getBubbleColor() {
-                  return getPrefs().getInt("custom_bubble_color", 0xFF212D3B);
+              public static int getCardColor() {
+                  return getPrefs().getInt("custom_card_color", 0xFF212D3B);
               }
 
-              public static void setBubbleColor(int color) {
-                  getPrefs().edit().putInt("custom_bubble_color", color).apply();
+              public static void setCardColor(int color) {
+                  getPrefs().edit().putInt("custom_card_color", color).apply();
               }
 
               public static int getOutBubbleColor() {
@@ -587,70 +617,28 @@ jobs:
                   getPrefs().edit().putInt("custom_text_color", color).apply();
               }
 
-              public static float getBubbleCornerRadiusDp() {
-                  return getPrefs().getFloat("bubble_corner_dp", 18.0f);
-              }
-
-              public static void setBubbleCornerRadiusDp(float dp) {
-                  float clamped = Math.max(4.0f, Math.min(32.0f, dp));
-                  getPrefs().edit().putFloat("bubble_corner_dp", clamped).apply();
-              }
-
-              public static float getCardCornerRadiusDp() {
+              public static float getCornerRadiusDp() {
                   return getPrefs().getFloat("card_corner_dp", 16.0f);
               }
 
-              public static void setCardCornerRadiusDp(float dp) {
-                  float clamped = Math.max(6.0f, Math.min(36.0f, dp));
+              public static void setCornerRadiusDp(float dp) {
+                  float clamped = Math.max(8.0f, Math.min(28.0f, dp));
                   getPrefs().edit().putFloat("card_corner_dp", clamped).apply();
-              }
-
-              public static float getFontScaleMultiplier() {
-                  return getPrefs().getFloat("font_scale_mult", 1.0f);
-              }
-
-              public static void setFontScaleMultiplier(float mult) {
-                  float clamped = Math.max(0.85f, Math.min(1.35f, mult));
-                  getPrefs().edit().putFloat("font_scale_mult", clamped).apply();
-              }
-
-              public static boolean isCompactMessageSpacing() {
-                  return getPrefs().getBoolean("compact_msg_spacing", false);
-              }
-
-              public static void toggleCompactMessageSpacing() {
-                  getPrefs().edit().putBoolean("compact_msg_spacing", !isCompactMessageSpacing()).apply();
-              }
-
-              public static boolean isGlassBlurCards() {
-                  return getPrefs().getBoolean("glass_blur_cards", true);
-              }
-
-              public static void toggleGlassBlurCards() {
-                  getPrefs().edit().putBoolean("glass_blur_cards", !isGlassBlurCards()).apply();
               }
 
               public static void resetCustomThemeToDefaults() {
                   getPrefs().edit()
                       .putInt("custom_accent_color", 0xFF3390EC)
-                      .putInt("custom_surface_color", 0xFF18222D)
-                      .putInt("custom_bubble_color", 0xFF212D3B)
+                      .putInt("custom_surface_color", 0xFF17212B)
+                      .putInt("custom_card_color", 0xFF212D3B)
                       .putInt("custom_out_bubble_color", 0xFF2B5278)
                       .putInt("custom_text_color", 0xFFFFFFFF)
-                      .putFloat("bubble_corner_dp", 18.0f)
                       .putFloat("card_corner_dp", 16.0f)
-                      .putFloat("font_scale_mult", 1.0f)
-                      .putBoolean("compact_msg_spacing", false)
-                      .putBoolean("glass_blur_cards", true)
                       .apply();
               }
 
               public static String formatHex(int color) {
                   return String.format("#%06X", (0xFFFFFF & color));
-              }
-
-              public static int getSurfaceTintColor() {
-                  return getSurfaceColor();
               }
 
               public static boolean isForce120Hz() {
@@ -692,9 +680,22 @@ jobs:
               }
 
               public static void markDeletedLocally(long dialogId, int msgId) {
+                  if (!isSaveDeletedEnabled(dialogId)) return;
                   Set<String> set = getDeletedSet();
                   set.add(dialogId + "_" + msgId);
                   set.add("0_" + msgId);
+                  getPrefs().edit().putStringSet("deleted_msgs_set", new HashSet<>(set)).apply();
+              }
+
+              public static void markDeletedBatch(long dialogId, java.util.List<Integer> msgIds) {
+                  if (!isSaveDeletedEnabled(dialogId) || msgIds == null || msgIds.isEmpty()) return;
+                  Set<String> set = getDeletedSet();
+                  for (Integer id : msgIds) {
+                      if (id != null) {
+                          set.add(dialogId + "_" + id);
+                          set.add("0_" + id);
+                      }
+                  }
                   getPrefs().edit().putStringSet("deleted_msgs_set", new HashSet<>(set)).apply();
               }
 
@@ -724,15 +725,18 @@ jobs:
               f.write(custom_cfg_code)
           diag("CUSTOMCFG", f"Wrote {h_dir}/CustomConfig.java")
 
-          # 8. LocalWhisperHelper built safely using string arrays and anonymous listeners
+          # 8. LocalWhisperHelper with Anti-Delete & Secret Media switches in Notes Hub
           whisper_lines = [
               "package org.telegram.messenger;",
+              "import android.animation.ArgbEvaluator;",
+              "import android.animation.ValueAnimator;",
               "import android.app.Activity;",
-              "import android.app.AlertDialog;",
+              "import android.app.Dialog;",
               "import android.content.ClipData;",
               "import android.content.ClipboardManager;",
               "import android.content.Context;",
               "import android.content.Intent;",
+              "import android.content.res.ColorStateList;",
               "import android.graphics.Color;",
               "import android.graphics.Typeface;",
               "import android.graphics.drawable.GradientDrawable;",
@@ -750,7 +754,8 @@ jobs:
               "import android.view.ViewGroup;",
               "import android.view.Window;",
               "import android.view.WindowManager;",
-              "import android.widget.Button;",
+              "import android.view.animation.DecelerateInterpolator;",
+              "import android.view.animation.OvershootInterpolator;",
               "import android.widget.EditText;",
               "import android.widget.HorizontalScrollView;",
               "import android.widget.LinearLayout;",
@@ -767,16 +772,8 @@ jobs:
               "import java.nio.ByteOrder;",
               "public class LocalWhisperHelper {",
               "  private static final String MODEL_ASSET_PATH = \"whisper/ggml-small-q5_1.bin\";",
-              "  private static final int TG_BLUE = 0xFF3390EC;",
-              "  private static final int TG_DARK_BG = 0xFF18222D;",
-              "  private static final int TG_DARK_CELL = 0xFF212D3B;",
-              "  private static final int TG_DARK_DIVIDER = 0xFF10161D;",
-              "  private static final int TG_TEXT_MAIN = 0xFFFFFFFF;",
-              "  private static final int TG_TEXT_SUB = 0xFF8A9BA8;",
-              "  private interface ColorApplyCallback { void onApply(int color); }",
               "  private static int dp(Context ctx, float value) {",
-              "    float density = ctx.getResources().getDisplayMetrics().density;",
-              "    return Math.round(value * density);",
+              "    return Math.round(value * ctx.getResources().getDisplayMetrics().density);",
               "  }",
               "  private static int withAlpha(int color, int alpha) {",
               "    return Color.argb(Math.max(0, Math.min(255, alpha)), Color.red(color), Color.green(color), Color.blue(color));",
@@ -789,66 +786,32 @@ jobs:
               "    if (strokeColor != Color.TRANSPARENT) { gd.setStroke(dp(ctx, 1f), strokeColor); }",
               "    return gd;",
               "  }",
-              "  private static View makeSectionDivider(Context ctx) {",
-              "    View v = new View(ctx);",
-              "    v.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(ctx, 10)));",
-              "    v.setBackgroundColor(TG_DARK_DIVIDER);",
-              "    return v;",
+              "  private static void animateCardEntrance(View v, long delayMs) {",
+              "    v.setAlpha(0f);",
+              "    v.setTranslationY(dp(v.getContext(), 14));",
+              "    v.animate().alpha(1f).translationY(0f).setStartDelay(delayMs).setDuration(260).setInterpolator(new DecelerateInterpolator()).start();",
               "  }",
-              "  private static TextView makeSectionHeader(Context ctx, String title) {",
-              "    TextView tv = new TextView(ctx);",
-              "    tv.setText(title);",
-              "    tv.setTextColor(TG_BLUE);",
-              "    tv.setTypeface(Typeface.DEFAULT_BOLD);",
-              "    tv.setTextSize(13.5f);",
-              "    tv.setPadding(dp(ctx, 18), dp(ctx, 12), dp(ctx, 18), dp(ctx, 6));",
-              "    return tv;",
+              "  private static void animatePulseTap(View v) {",
+              "    v.animate().scaleX(0.97f).scaleY(0.97f).setDuration(80).withEndAction(new Runnable() {",
+              "      @Override public void run() {",
+              "        v.animate().scaleX(1f).scaleY(1f).setDuration(140).setInterpolator(new OvershootInterpolator(1.6f)).start();",
+              "      }",
+              "    }).start();",
               "  }",
-              "  private static LinearLayout makeTgRow(Context ctx, String title, String subtitle, String badgeRight, View.OnClickListener listener) {",
-              "    LinearLayout row = new LinearLayout(ctx);",
-              "    row.setOrientation(LinearLayout.HORIZONTAL);",
-              "    row.setGravity(Gravity.CENTER_VERTICAL);",
-              "    row.setPadding(dp(ctx, 18), dp(ctx, 11), dp(ctx, 18), dp(ctx, 11));",
-              "    row.setBackgroundColor(TG_DARK_CELL);",
-              "    if (listener != null) { row.setOnClickListener(listener); }",
-              "    LinearLayout textCol = new LinearLayout(ctx);",
-              "    textCol.setOrientation(LinearLayout.VERTICAL);",
-              "    LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);",
-              "    textLp.rightMargin = dp(ctx, 10);",
-              "    TextView titleTv = new TextView(ctx);",
-              "    titleTv.setText(title);",
-              "    titleTv.setTextColor(TG_TEXT_MAIN);",
-              "    titleTv.setTextSize(15.5f);",
-              "    textCol.addView(titleTv);",
-              "    if (!TextUtils.isEmpty(subtitle)) {",
-              "      TextView subTv = new TextView(ctx);",
-              "      subTv.setText(subtitle);",
-              "      subTv.setTextColor(TG_TEXT_SUB);",
-              "      subTv.setTextSize(13f);",
-              "      subTv.setPadding(0, dp(ctx, 2), 0, 0);",
-              "      textCol.addView(subTv);",
-              "    }",
-              "    row.addView(textCol, textLp);",
-              "    if (!TextUtils.isEmpty(badgeRight)) {",
-              "      TextView badgeTv = new TextView(ctx);",
-              "      badgeTv.setText(badgeRight);",
-              "      badgeTv.setTextColor(TG_BLUE);",
-              "      badgeTv.setTypeface(Typeface.DEFAULT_BOLD);",
-              "      badgeTv.setTextSize(13.5f);",
-              "      row.addView(badgeTv);",
-              "    }",
-              "    return row;",
-              "  }",
-              "  private static Switch makeTgSwitchRow(Context ctx, String title, String subtitle, boolean checked, View.OnClickListener onToggle) {",
-              "    Switch sw = new Switch(ctx);",
-              "    sw.setText(TextUtils.isEmpty(subtitle) ? title : (title + \"\\n\" + subtitle));",
-              "    sw.setTextColor(TG_TEXT_MAIN);",
-              "    sw.setTextSize(14.5f);",
-              "    sw.setChecked(checked);",
-              "    sw.setPadding(dp(ctx, 18), dp(ctx, 10), dp(ctx, 18), dp(ctx, 10));",
-              "    sw.setBackgroundColor(TG_DARK_CELL);",
-              "    if (onToggle != null) { sw.setOnClickListener(onToggle); }",
-              "    return sw;",
+              "  private static void animateBgTransition(final View target, int fromColor, int toColor, final float radiusDp, final int strokeColor) {",
+              "    ValueAnimator anim = ValueAnimator.ofObject(new ArgbEvaluator(), fromColor, toColor);",
+              "    anim.setDuration(220);",
+              "    anim.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {",
+              "      @Override public void onAnimationUpdate(ValueAnimator animation) {",
+              "        int c = (Integer) animation.getAnimatedValue();",
+              "        if (radiusDp > 0f) {",
+              "          target.setBackground(makeTgSurface(c, strokeColor, radiusDp, target.getContext()));",
+              "        } else {",
+              "          target.setBackgroundColor(c);",
+              "        }",
+              "      }",
+              "    });",
+              "    anim.start();",
               "  }",
               "  private static int safeParseHex(String input, int fallback) {",
               "    if (TextUtils.isEmpty(input)) return fallback;",
@@ -856,113 +819,489 @@ jobs:
               "    if (!clean.startsWith(\"#\")) clean = \"#\" + clean;",
               "    try { return Color.parseColor(clean); } catch (Throwable ignored) { return fallback; }",
               "  }",
+              "  private static TextView makeSectionHeader(Context ctx, String title, int accentColor) {",
+              "    TextView tv = new TextView(ctx);",
+              "    tv.setText(title);",
+              "    tv.setTextColor(accentColor);",
+              "    tv.setTypeface(Typeface.DEFAULT_BOLD);",
+              "    tv.setTextSize(13.5f);",
+              "    tv.setPadding(dp(ctx, 16), dp(ctx, 14), dp(ctx, 16), dp(ctx, 6));",
+              "    return tv;",
+              "  }",
+              "  private static LinearLayout makeTgCardRow(Context ctx, String title, String subtitle, String badgeRight, int cardBg, int accentColor, int textColor, float radiusDp, final View.OnClickListener listener) {",
+              "    final LinearLayout row = new LinearLayout(ctx);",
+              "    row.setOrientation(LinearLayout.HORIZONTAL);",
+              "    row.setGravity(Gravity.CENTER_VERTICAL);",
+              "    row.setPadding(dp(ctx, 16), dp(ctx, 13), dp(ctx, 16), dp(ctx, 13));",
+              "    row.setBackground(makeTgSurface(cardBg, withAlpha(accentColor, 45), radiusDp, ctx));",
+              "    LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
+              "    rowLp.leftMargin = dp(ctx, 12); rowLp.rightMargin = dp(ctx, 12); rowLp.bottomMargin = dp(ctx, 8);",
+              "    row.setLayoutParams(rowLp);",
+              "    if (listener != null) {",
+              "      row.setOnClickListener(new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { animatePulseTap(row); listener.onClick(v); }",
+              "      });",
+              "    }",
+              "    LinearLayout textCol = new LinearLayout(ctx);",
+              "    textCol.setOrientation(LinearLayout.VERTICAL);",
+              "    LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);",
+              "    textLp.rightMargin = dp(ctx, 10);",
+              "    TextView titleTv = new TextView(ctx);",
+              "    titleTv.setText(title);",
+              "    titleTv.setTextColor(textColor);",
+              "    titleTv.setTypeface(Typeface.DEFAULT_BOLD);",
+              "    titleTv.setTextSize(15f);",
+              "    textCol.addView(titleTv);",
+              "    if (!TextUtils.isEmpty(subtitle)) {",
+              "      TextView subTv = new TextView(ctx);",
+              "      subTv.setText(subtitle);",
+              "      subTv.setTextColor(withAlpha(textColor, 165));",
+              "      subTv.setTextSize(12.5f);",
+              "      subTv.setPadding(0, dp(ctx, 3), 0, 0);",
+              "      textCol.addView(subTv);",
+              "    }",
+              "    row.addView(textCol, textLp);",
+              "    if (!TextUtils.isEmpty(badgeRight)) {",
+              "      TextView badgeTv = new TextView(ctx);",
+              "      badgeTv.setText(badgeRight);",
+              "      badgeTv.setTextColor(Color.WHITE);",
+              "      badgeTv.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      badgeTv.setTextSize(12f);",
+              "      badgeTv.setPadding(dp(ctx, 10), dp(ctx, 5), dp(ctx, 10), dp(ctx, 5));",
+              "      badgeTv.setBackground(makeTgSurface(accentColor, Color.TRANSPARENT, 12f, ctx));",
+              "      row.addView(badgeTv);",
+              "    }",
+              "    return row;",
+              "  }",
+              "  private static LinearLayout makeTgSwitchCard(Context ctx, String title, String subtitle, boolean checked, int cardBg, int accentColor, int textColor, float radiusDp, final View.OnClickListener onToggle) {",
+              "    final LinearLayout row = new LinearLayout(ctx);",
+              "    row.setOrientation(LinearLayout.HORIZONTAL);",
+              "    row.setGravity(Gravity.CENTER_VERTICAL);",
+              "    row.setPadding(dp(ctx, 16), dp(ctx, 11), dp(ctx, 16), dp(ctx, 11));",
+              "    row.setBackground(makeTgSurface(cardBg, withAlpha(accentColor, 35), radiusDp, ctx));",
+              "    LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
+              "    rowLp.leftMargin = dp(ctx, 12); rowLp.rightMargin = dp(ctx, 12); rowLp.bottomMargin = dp(ctx, 8);",
+              "    row.setLayoutParams(rowLp);",
+              "    LinearLayout textCol = new LinearLayout(ctx);",
+              "    textCol.setOrientation(LinearLayout.VERTICAL);",
+              "    LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);",
+              "    textLp.rightMargin = dp(ctx, 10);",
+              "    TextView titleTv = new TextView(ctx);",
+              "    titleTv.setText(title);",
+              "    titleTv.setTextColor(textColor);",
+              "    titleTv.setTypeface(Typeface.DEFAULT_BOLD);",
+              "    titleTv.setTextSize(14.5f);",
+              "    textCol.addView(titleTv);",
+              "    if (!TextUtils.isEmpty(subtitle)) {",
+              "      TextView subTv = new TextView(ctx);",
+              "      subTv.setText(subtitle);",
+              "      subTv.setTextColor(withAlpha(textColor, 165));",
+              "      subTv.setTextSize(12.5f);",
+              "      subTv.setPadding(0, dp(ctx, 2), 0, 0);",
+              "      textCol.addView(subTv);",
+              "    }",
+              "    row.addView(textCol, textLp);",
+              "    final Switch sw = new Switch(ctx);",
+              "    sw.setChecked(checked);",
+              "    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {",
+              "      sw.setThumbTintList(ColorStateList.valueOf(checked ? accentColor : 0xFFB0BEC5));",
+              "      sw.setTrackTintList(ColorStateList.valueOf(withAlpha(checked ? accentColor : 0xFF607D8B, 110)));",
+              "    }",
+              "    View.OnClickListener clickHandler = new View.OnClickListener() {",
+              "      @Override public void onClick(View v) {",
+              "        animatePulseTap(row);",
+              "        if (onToggle != null) onToggle.onClick(v);",
+              "        boolean nextState = v == sw ? sw.isChecked() : !sw.isChecked();",
+              "        sw.setChecked(nextState);",
+              "        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {",
+              "          int ac = CustomConfig.getAccentColor();",
+              "          sw.setThumbTintList(ColorStateList.valueOf(nextState ? ac : 0xFFB0BEC5));",
+              "          sw.setTrackTintList(ColorStateList.valueOf(withAlpha(nextState ? ac : 0xFF607D8B, 110)));",
+              "        }",
+              "      }",
+              "    };",
+              "    sw.setOnClickListener(clickHandler);",
+              "    row.setOnClickListener(clickHandler);",
+              "    row.addView(sw);",
+              "    return row;",
+              "  }",
               "  public static void openNotesMainHub(final Activity activity, final long dialogId) {",
               "    if (activity == null || activity.isFinishing()) return;",
               "    try {",
               "      refreshDisplayAndGuestGuard(activity);",
+              "      final int accent = CustomConfig.getAccentColor();",
+              "      final int surface = CustomConfig.getSurfaceColor();",
+              "      final int card = CustomConfig.getCardColor();",
+              "      final int textCol = CustomConfig.getTextColor();",
+              "      final float radius = CustomConfig.getCornerRadiusDp();",
+              "      final Dialog dialog = new Dialog(activity, android.R.style.Theme_DeviceDefault_NoActionBar);",
+              "      LinearLayout shell = new LinearLayout(activity);",
+              "      shell.setOrientation(LinearLayout.VERTICAL);",
+              "      shell.setBackgroundColor(surface);",
+              "      LinearLayout topBar = new LinearLayout(activity);",
+              "      topBar.setOrientation(LinearLayout.HORIZONTAL);",
+              "      topBar.setGravity(Gravity.CENTER_VERTICAL);",
+              "      topBar.setBackgroundColor(card);",
+              "      topBar.setPadding(dp(activity, 16), dp(activity, 14), dp(activity, 16), dp(activity, 14));",
+              "      TextView backBtn = new TextView(activity);",
+              "      backBtn.setText(\"←\");",
+              "      backBtn.setTextColor(accent);",
+              "      backBtn.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      backBtn.setTextSize(22f);",
+              "      backBtn.setPadding(dp(activity, 4), dp(activity, 2), dp(activity, 14), dp(activity, 2));",
+              "      backBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { dialog.dismiss(); } });",
+              "      topBar.addView(backBtn);",
+              "      LinearLayout titleBox = new LinearLayout(activity);",
+              "      titleBox.setOrientation(LinearLayout.VERTICAL);",
+              "      TextView appTitle = new TextView(activity);",
+              "      appTitle.setText(\"Notes • Центр управления\");",
+              "      appTitle.setTextColor(textCol);",
+              "      appTitle.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      appTitle.setTextSize(18f);",
+              "      titleBox.addView(appTitle);",
+              "      TextView appSub = new TextView(activity);",
+              "      String statusLine = CustomConfig.isGuestHandoverActive()",
+              "        ? (\"Гостевой щит активен: \" + CustomConfig.getGuestRemainingSeconds() + \" сек\")",
+              "        : (\"Сохранено удалённых: \" + CustomConfig.getSavedDeletedCount() + \" • Акцент \" + CustomConfig.formatHex(accent));",
+              "      appSub.setText(statusLine);",
+              "      appSub.setTextColor(accent);",
+              "      appSub.setTextSize(12.5f);",
+              "      titleBox.addView(appSub);",
+              "      topBar.addView(titleBox);",
+              "      shell.addView(topBar);",
               "      ScrollView scroll = new ScrollView(activity);",
-              "      scroll.setBackgroundColor(TG_DARK_BG);",
+              "      scroll.setFillViewport(true);",
               "      LinearLayout root = new LinearLayout(activity);",
               "      root.setOrientation(LinearLayout.VERTICAL);",
+              "      root.setPadding(0, dp(activity, 6), 0, dp(activity, 28));",
               "      scroll.addView(root);",
-              "      LinearLayout topBanner = new LinearLayout(activity);",
-              "      topBanner.setOrientation(LinearLayout.VERTICAL);",
-              "      topBanner.setBackgroundColor(TG_DARK_CELL);",
-              "      topBanner.setPadding(dp(activity, 18), dp(activity, 14), dp(activity, 18), dp(activity, 14));",
-              "      TextView appTitle = new TextView(activity);",
-              "      appTitle.setText(\"Notes - Настройки клиента [v3]\");",
-              "      appTitle.setTextColor(TG_TEXT_MAIN);",
-              "      appTitle.setTypeface(Typeface.DEFAULT_BOLD);",
-              "      appTitle.setTextSize(17f);",
-              "      topBanner.addView(appTitle);",
-              "      TextView appHint = new TextView(activity);",
-              "      String statusLine = CustomConfig.isGuestHandoverActive()",
-              "        ? (\"Гостевой режим активен: осталось \" + CustomConfig.getGuestRemainingSeconds() + \" сек - FLAG_SECURE включен\")",
-              "        : (\"Пакет: com.alexey.notesclient - Локальный Premium: \" + (CustomConfig.isLocalPremiumEnabled() ? \"ВКЛ\" : \"ВЫКЛ\"));",
-              "      appHint.setText(statusLine);",
-              "      appHint.setTextColor(TG_BLUE);",
-              "      appHint.setTextSize(12.5f);",
-              "      appHint.setPadding(0, dp(activity, 3), 0, 0);",
-              "      topBanner.addView(appHint);",
-              "      root.addView(topBanner);",
-              "      root.addView(makeSectionDivider(activity));",
-              "      root.addView(makeSectionHeader(activity, \"Интерфейс и отправка медиа\"));",
-              "      root.addView(makeTgRow(activity, \"Панель настройки тем\", \"Любые цвета (HEX и палитра), скругления и масштаб шрифта\", \"Открыть\", new View.OnClickListener() {",
-              "        @Override public void onClick(View v) { triggerPorscheTick(14, 110); openThemeStudioPanel(activity); }",
-              "      }));",
-              "      root.addView(makeSectionDivider(activity));",
-              "      String[] qNames = new String[] {\"85%\", \"95%\", \"100% оригинал\"};",
-              "      root.addView(makeTgRow(activity, \"Настройки отправки медиа\", \"Качество фото, профиль видео, спойлеры, EXIF, файл, тихо\", qNames[CustomConfig.getPhotoSendQuality()], new View.OnClickListener() {",
+              "      shell.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));",
+              "      int animIdx = 0;",
+              "      root.addView(makeSectionHeader(activity, \"СОХРАНЕНИЕ ДАННЫХ И АНТИ-УДАЛЕНИЕ\", accent));",
+              "      View antiDelSw = makeTgSwitchCard(activity, \"Сохранять удалённые сообщения\", \"Не удалять сообщения из истории, когда собеседник стирает их\", CustomConfig.isSaveDeletedEnabled(dialogId), card, accent, textCol, radius, new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { CustomConfig.toggleSaveDeleted(); triggerPorscheTick(14, 110); }",
+              "      });",
+              "      animateCardEntrance(antiDelSw, 35L * animIdx++);",
+              "      root.addView(antiDelSw);",
+              "      View secretMediaSw = makeTgSwitchCard(activity, \"Сохранять одноразовые сообщения и медиа\", \"Копировать фото/видео с таймером в NotesVault при открытии\", CustomConfig.isSaveSecretMediaEnabled(dialogId), card, accent, textCol, radius, new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { CustomConfig.toggleSaveSecretMedia(); triggerPorscheTick(14, 110); }",
+              "      });",
+              "      animateCardEntrance(secretMediaSw, 35L * animIdx++);",
+              "      root.addView(secretMediaSw);",
+              "      root.addView(makeSectionHeader(activity, \"ВНЕШНИЙ ВИД И МЕДИА\", accent));",
+              "      View themeRow = makeTgCardRow(activity, \"Палитра и цвета интерфейса\", \"Живой выбор цвета в 1 тап, HSV-слайдеры и скругления\", \"Настроить\", card, accent, textCol, radius, new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { triggerPorscheTick(14, 110); dialog.dismiss(); openThemeStudioPanel(activity, dialogId); }",
+              "      });",
+              "      animateCardEntrance(themeRow, 35L * animIdx++);",
+              "      root.addView(themeRow);",
+              "      String[] qNames = new String[] {\"85%\", \"95%\", \"100%\"};",
+              "      View mediaRow = makeTgCardRow(activity, \"Качество и отправка медиа\", \"Фото, видео, спойлеры, очистка EXIF и NotesVault\", qNames[CustomConfig.getPhotoSendQuality()], card, accent, textCol, radius, new View.OnClickListener() {",
               "        @Override public void onClick(View v) { triggerPorscheTick(14, 110); openMediaSendSettingsPanel(activity); }",
-              "      }));",
-              "      root.addView(makeSectionDivider(activity));",
-              "      root.addView(makeSectionHeader(activity, \"Приватность, гостевой режим и Whisper\"));",
-              "      root.addView(makeTgRow(activity, \"Гостевой режим на 5 минут\", CustomConfig.isGuestHandoverActive() ? (\"Осталось \" + CustomConfig.getGuestRemainingSeconds() + \" сек - нажмите чтобы снять\") : \"FLAG_SECURE против скриншотов и блок удаления на 5 минут\", CustomConfig.isGuestHandoverActive() ? \"Снять\" : \"5 мин\", new View.OnClickListener() {",
+              "      });",
+              "      animateCardEntrance(mediaRow, 35L * animIdx++);",
+              "      root.addView(mediaRow);",
+              "      root.addView(makeSectionHeader(activity, \"ПРИВАТНОСТЬ И НЕВИДИМОСТЬ\", accent));",
+              "      View guestRow = makeTgCardRow(activity, \"Гостевой режим на 5 минут\", CustomConfig.isGuestHandoverActive() ? (\"Осталось \" + CustomConfig.getGuestRemainingSeconds() + \" сек — нажми чтобы снять\") : \"Защита скриншотов (FLAG_SECURE) и запрет удаления чатов\", CustomConfig.isGuestHandoverActive() ? \"Снять\" : \"5 мин\", card, accent, textCol, radius, new View.OnClickListener() {",
               "        @Override public void onClick(View v) {",
               "          if (CustomConfig.isGuestHandoverActive()) CustomConfig.disarmGuestHandover(); else CustomConfig.armGuestHandoverTimer(5);",
-              "          refreshDisplayAndGuestGuard(activity); triggerPorscheTick(22, 140); openNotesMainHub(activity, dialogId);",
+              "          refreshDisplayAndGuestGuard(activity); triggerPorscheTick(22, 140); dialog.dismiss(); openNotesMainHub(activity, dialogId);",
               "        }",
-              "      }));",
-              "      root.addView(makeSectionDivider(activity));",
-              "      root.addView(makeTgSwitchRow(activity, \"Режим призрака\", \"Не отправлять отметки прочтения\", CustomConfig.isGhostRead(dialogId), new View.OnClickListener() {",
+              "      });",
+              "      animateCardEntrance(guestRow, 35L * animIdx++);",
+              "      root.addView(guestRow);",
+              "      View ghostSw = makeTgSwitchCard(activity, \"Режим призрака\", \"Читать сообщения без отправки двух галочек\", CustomConfig.isGhostRead(dialogId), card, accent, textCol, radius, new View.OnClickListener() {",
               "        @Override public void onClick(View v) { CustomConfig.toggleGhostRead(); triggerPorscheTick(12, 100); }",
-              "      }));",
-              "      root.addView(makeSectionDivider(activity));",
-              "      root.addView(makeTgSwitchRow(activity, \"Не показывать печатает...\", \"Скрыть статус набора текста\", CustomConfig.isNoTyping(dialogId), new View.OnClickListener() {",
+              "      });",
+              "      animateCardEntrance(ghostSw, 35L * animIdx++);",
+              "      root.addView(ghostSw);",
+              "      View typingSw = makeTgSwitchCard(activity, \"Скрыть «печатает...»\", \"Не показывать собеседнику набор текста или запись\", CustomConfig.isNoTyping(dialogId), card, accent, textCol, radius, new View.OnClickListener() {",
               "        @Override public void onClick(View v) { CustomConfig.toggleNoTyping(); triggerPorscheTick(12, 100); }",
-              "      }));",
-              "      root.addView(makeSectionDivider(activity));",
-              "      root.addView(makeTgSwitchRow(activity, \"Локальный Telegram Premium\", \"Локальные премиум-флаги и возможности\", CustomConfig.isLocalPremiumEnabled(), new View.OnClickListener() {",
+              "      });",
+              "      animateCardEntrance(typingSw, 35L * animIdx++);",
+              "      root.addView(typingSw);",
+              "      root.addView(makeSectionHeader(activity, \"PREMIUM, WHISPER RU И ЭКРАН\", accent));",
+              "      View premSw = makeTgSwitchCard(activity, \"Локальный Telegram Premium\", \"Разблокировка локальных премиум-функций клиента\", CustomConfig.isLocalPremiumEnabled(), card, accent, textCol, radius, new View.OnClickListener() {",
               "        @Override public void onClick(View v) { CustomConfig.toggleLocalPremium(); triggerPorscheTick(12, 100); }",
-              "      }));",
-              "      root.addView(makeSectionDivider(activity));",
-              "      root.addView(makeTgSwitchRow(activity, \"Локальный Whisper (RU)\", \"16 кГц WAV и модель ggml-small-q5_1.bin\", CustomConfig.isLocalWhisperRu(), new View.OnClickListener() {",
+              "      });",
+              "      animateCardEntrance(premSw, 35L * animIdx++);",
+              "      root.addView(premSw);",
+              "      View whispSw = makeTgSwitchCard(activity, \"Локальный Whisper (RU)\", \"Офлайн-расшифровка голосовых и кружков на русском\", CustomConfig.isLocalWhisperRu(), card, accent, textCol, radius, new View.OnClickListener() {",
               "        @Override public void onClick(View v) { CustomConfig.toggleLocalWhisperRu(); triggerPorscheTick(12, 100); }",
-              "      }));",
-              "      root.addView(makeSectionDivider(activity));",
-              "      root.addView(makeTgSwitchRow(activity, \"120 Гц и буст Honor Magic 6 Pro\", \"Плавная частота обновления и отклик Porsche\", CustomConfig.isForce120Hz(), new View.OnClickListener() {",
+              "      });",
+              "      animateCardEntrance(whispSw, 35L * animIdx++);",
+              "      root.addView(whispSw);",
+              "      View hzSw = makeTgSwitchCard(activity, \"120 Гц и HDR Honor Magic 6 Pro\", \"Максимальная герцовка и плавность интерфейса\", CustomConfig.isForce120Hz(), card, accent, textCol, radius, new View.OnClickListener() {",
               "        @Override public void onClick(View v) { CustomConfig.toggleForce120Hz(); refreshDisplayAndGuestGuard(activity); triggerPorscheTick(16, 120); }",
-              "      }));",
+              "      });",
+              "      animateCardEntrance(hzSw, 35L * animIdx++);",
+              "      root.addView(hzSw);",
               "      if (dialogId != 0L) {",
-              "        root.addView(makeSectionDivider(activity));",
-              "        root.addView(makeTgSwitchRow(activity, \"Стоковый режим для этого чата\", \"Отключить модификации в текущем диалоге\", CustomConfig.isStockMode(dialogId), new View.OnClickListener() {",
+              "        View stockSw = makeTgSwitchCard(activity, \"Стоковый режим для этого чата\", \"Отключить все моды только в текущем диалоге\", CustomConfig.isStockMode(dialogId), card, accent, textCol, radius, new View.OnClickListener() {",
               "          @Override public void onClick(View v) { CustomConfig.toggleStockMode(dialogId); triggerPorscheTick(14, 110); }",
-              "        }));",
+              "        });",
+              "        animateCardEntrance(stockSw, 35L * animIdx++);",
+              "        root.addView(stockSw);",
               "      }",
-              "      root.addView(makeSectionDivider(activity));",
-              "      root.addView(makeSectionHeader(activity, \"Где найти все новые функции\"));",
-              "      String whereFind = \"1) Настройки приложения -> меню (:) -> Notes - Панель функций\\n2) Меню чатов (:) -> Notes - Панель функций\\n3) Меню внутри чата (:) -> Notes - Панель функций\\n4) Анти-удаление и NotesVault работают в фоне\";",
-              "      root.addView(makeTgRow(activity, \"Путеводитель по функциям Notes\", whereFind, \"Справка\", new View.OnClickListener() {",
-              "        @Override public void onClick(View v) { openFeaturesGuideDialog(activity); }",
-              "      }));",
-              "      new AlertDialog.Builder(activity).setView(scroll).setPositiveButton(\"Закрыть\", null).show();",
+              "      dialog.setContentView(shell);",
+              "      dialog.show();",
               "    } catch (Throwable ignored) {}",
               "  }",
-              "  public static void openFeaturesGuideDialog(final Activity activity) {",
+              "  public static void openThemeStudioPanel(final Activity activity, final long returnDialogId) {",
               "    if (activity == null || activity.isFinishing()) return;",
               "    try {",
+              "      final int[] curAccent = new int[] { CustomConfig.getAccentColor() };",
+              "      final int[] curSurface = new int[] { CustomConfig.getSurfaceColor() };",
+              "      final int[] curCard = new int[] { CustomConfig.getCardColor() };",
+              "      final int[] curOut = new int[] { CustomConfig.getOutBubbleColor() };",
+              "      final int[] selectedSlot = new int[] { 0 };",
+              "      final Dialog dialog = new Dialog(activity, android.R.style.Theme_DeviceDefault_NoActionBar);",
+              "      final LinearLayout shell = new LinearLayout(activity);",
+              "      shell.setOrientation(LinearLayout.VERTICAL);",
+              "      shell.setBackgroundColor(curSurface[0]);",
+              "      final LinearLayout topBar = new LinearLayout(activity);",
+              "      topBar.setOrientation(LinearLayout.HORIZONTAL);",
+              "      topBar.setGravity(Gravity.CENTER_VERTICAL);",
+              "      topBar.setBackgroundColor(curCard[0]);",
+              "      topBar.setPadding(dp(activity, 16), dp(activity, 14), dp(activity, 16), dp(activity, 14));",
+              "      final TextView backBtn = new TextView(activity);",
+              "      backBtn.setText(\"←\");",
+              "      backBtn.setTextColor(curAccent[0]);",
+              "      backBtn.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      backBtn.setTextSize(22f);",
+              "      backBtn.setPadding(dp(activity, 4), dp(activity, 2), dp(activity, 14), dp(activity, 2));",
+              "      backBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { dialog.dismiss(); openNotesMainHub(activity, returnDialogId); } });",
+              "      topBar.addView(backBtn);",
+              "      TextView titleTv = new TextView(activity);",
+              "      titleTv.setText(\"Палитра и цвета интерфейса\");",
+              "      titleTv.setTextColor(Color.WHITE);",
+              "      titleTv.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      titleTv.setTextSize(18f);",
+              "      topBar.addView(titleTv);",
+              "      shell.addView(topBar);",
               "      ScrollView scroll = new ScrollView(activity);",
-              "      scroll.setBackgroundColor(TG_DARK_BG);",
-              "      LinearLayout root = new LinearLayout(activity);",
+              "      final LinearLayout root = new LinearLayout(activity);",
               "      root.setOrientation(LinearLayout.VERTICAL);",
-              "      root.setPadding(dp(activity, 18), dp(activity, 14), dp(activity, 18), dp(activity, 18));",
+              "      root.setPadding(dp(activity, 14), dp(activity, 14), dp(activity, 14), dp(activity, 28));",
               "      scroll.addView(root);",
-              "      String[] parts = new String[] {",
-              "        \"- Панель настройки тем: открывается из раздела Notes в Настройках, из меню чатов или внутри чата.\",",
-              "        \"- Настройки отправки медиа: качество фото (85% / 95% / 100%), профиль видео, спойлеры, EXIF, файл, тихая отправка и NotesVault.\",",
-              "        \"- Гостевой режим на 5 минут: включает FLAG_SECURE и блокирует удаление/очистку на 5 минут.\",",
-              "        \"- Анти-удаление и NotesVault: удаленные сообщения сохраняются локально, секретные медиа пишутся в Pictures/NotesVault и Movies/NotesVault (кроме гостевого режима).\",",
-              "        \"- Локальный Whisper (RU): конвертирует аудио/кружки в 16 кГц WAV и передает модель whisper/ggml-small-q5_1.bin с языком ru.\"",
+              "      shell.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));",
+              "      final LinearLayout previewCard = new LinearLayout(activity);",
+              "      previewCard.setOrientation(LinearLayout.VERTICAL);",
+              "      previewCard.setPadding(dp(activity, 16), dp(activity, 14), dp(activity, 16), dp(activity, 14));",
+              "      previewCard.setBackground(makeTgSurface(curCard[0], withAlpha(curAccent[0], 170), CustomConfig.getCornerRadiusDp(), activity));",
+              "      final TextView prevHeader = new TextView(activity);",
+              "      prevHeader.setText(\"ЖИВОЙ ПРЕДПРОСМОТР TELEGRAM UI\");",
+              "      prevHeader.setTextColor(curAccent[0]);",
+              "      prevHeader.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      prevHeader.setTextSize(12f);",
+              "      previewCard.addView(prevHeader);",
+              "      final TextView inMsg = new TextView(activity);",
+              "      inMsg.setText(\"Входящее сообщение: цвета меняются плавно в реальном времени\");",
+              "      inMsg.setTextColor(Color.WHITE);",
+              "      inMsg.setTextSize(14f);",
+              "      inMsg.setPadding(dp(activity, 12), dp(activity, 9), dp(activity, 12), dp(activity, 9));",
+              "      inMsg.setBackground(makeTgSurface(curSurface[0], withAlpha(Color.WHITE, 30), CustomConfig.getCornerRadiusDp(), activity));",
+              "      LinearLayout.LayoutParams inLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
+              "      inLp.topMargin = dp(activity, 10);",
+              "      previewCard.addView(inMsg, inLp);",
+              "      final TextView outMsg = new TextView(activity);",
+              "      outMsg.setText(\"Исходящее сообщение • \" + CustomConfig.formatHex(curAccent[0]));",
+              "      outMsg.setTextColor(Color.WHITE);",
+              "      outMsg.setTextSize(14f);",
+              "      outMsg.setPadding(dp(activity, 12), dp(activity, 9), dp(activity, 12), dp(activity, 9));",
+              "      outMsg.setBackground(makeTgSurface(curOut[0], withAlpha(curAccent[0], 140), CustomConfig.getCornerRadiusDp(), activity));",
+              "      LinearLayout.LayoutParams outLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
+              "      outLp.gravity = Gravity.END; outLp.topMargin = dp(activity, 8);",
+              "      previewCard.addView(outMsg, outLp);",
+              "      root.addView(previewCard);",
+              "      HorizontalScrollView slotScroll = new HorizontalScrollView(activity);",
+              "      slotScroll.setHorizontalScrollBarEnabled(false);",
+              "      slotScroll.setPadding(0, dp(activity, 14), 0, dp(activity, 10));",
+              "      LinearLayout slotRow = new LinearLayout(activity);",
+              "      slotRow.setOrientation(LinearLayout.HORIZONTAL);",
+              "      final String[] slotNames = new String[] {\"Акцент\", \"Фон экрана\", \"Карточки\", \"Мои баблы\"};",
+              "      final TextView[] slotTabs = new TextView[slotNames.length];",
+              "      final SeekBar hueSeek = new SeekBar(activity);",
+              "      final SeekBar satSeek = new SeekBar(activity);",
+              "      final SeekBar valSeek = new SeekBar(activity);",
+              "      final EditText hexEdit = new EditText(activity);",
+              "      final Runnable syncSlidersFromSlot = new Runnable() {",
+              "        @Override public void run() {",
+              "          int activeCol = selectedSlot[0] == 0 ? curAccent[0] : (selectedSlot[0] == 1 ? curSurface[0] : (selectedSlot[0] == 2 ? curCard[0] : curOut[0]));",
+              "          float[] hsv = new float[3];",
+              "          Color.colorToHSV(activeCol, hsv);",
+              "          hueSeek.setProgress(Math.round(hsv[0]));",
+              "          satSeek.setProgress(Math.round(hsv[1] * 100f));",
+              "          valSeek.setProgress(Math.round(hsv[2] * 100f));",
+              "          hexEdit.setText(CustomConfig.formatHex(activeCol));",
+              "          for (int i = 0; i < slotTabs.length; i++) {",
+              "            boolean sel = (i == selectedSlot[0]);",
+              "            slotTabs[i].setBackground(makeTgSurface(sel ? curAccent[0] : curCard[0], withAlpha(curAccent[0], 110), 14f, activity));",
+              "            slotTabs[i].setTextColor(sel ? Color.WHITE : 0xFFB0BEC5);",
+              "          }",
+              "        }",
               "      };",
-              "      StringBuilder sb = new StringBuilder();",
-              "      for (int i = 0; i < parts.length; i++) { if (i > 0) sb.append(\"\\n\\n\"); sb.append(parts[i]); }",
-              "      TextView tv = new TextView(activity);",
-              "      tv.setText(sb.toString());",
-              "      tv.setTextColor(TG_TEXT_MAIN);",
-              "      tv.setTextSize(14f);",
-              "      tv.setLineSpacing(dp(activity, 3), 1.1f);",
-              "      root.addView(tv);",
-              "      new AlertDialog.Builder(activity).setTitle(\"Где найти новые функции\").setView(scroll).setPositiveButton(\"Понятно\", null).show();",
+              "      final Runnable applyLiveVisuals = new Runnable() {",
+              "        @Override public void run() {",
+              "          float r = CustomConfig.getCornerRadiusDp();",
+              "          shell.setBackgroundColor(curSurface[0]);",
+              "          topBar.setBackgroundColor(curCard[0]);",
+              "          backBtn.setTextColor(curAccent[0]);",
+              "          prevHeader.setTextColor(curAccent[0]);",
+              "          previewCard.setBackground(makeTgSurface(curCard[0], withAlpha(curAccent[0], 170), r, activity));",
+              "          inMsg.setBackground(makeTgSurface(curSurface[0], withAlpha(Color.WHITE, 30), r, activity));",
+              "          outMsg.setText(\"Исходящее сообщение • \" + CustomConfig.formatHex(curAccent[0]));",
+              "          outMsg.setBackground(makeTgSurface(curOut[0], withAlpha(curAccent[0], 140), r, activity));",
+              "          for (int i = 0; i < slotTabs.length; i++) {",
+              "            boolean sel = (i == selectedSlot[0]);",
+              "            slotTabs[i].setBackground(makeTgSurface(sel ? curAccent[0] : curCard[0], withAlpha(curAccent[0], 110), 14f, activity));",
+              "          }",
+              "        }",
+              "      };",
+              "      final Runnable commitColorToSlot = new Runnable() {",
+              "        @Override public void run() {",
+              "          float[] hsv = new float[] { hueSeek.getProgress(), satSeek.getProgress() / 100f, valSeek.getProgress() / 100f };",
+              "          int newCol = Color.HSVToColor(hsv);",
+              "          if (selectedSlot[0] == 0) { curAccent[0] = newCol; CustomConfig.setAccentColor(newCol); }",
+              "          else if (selectedSlot[0] == 1) { curSurface[0] = newCol; CustomConfig.setSurfaceColor(newCol); }",
+              "          else if (selectedSlot[0] == 2) { curCard[0] = newCol; CustomConfig.setCardColor(newCol); }",
+              "          else { curOut[0] = newCol; CustomConfig.setOutBubbleColor(newCol); }",
+              "          hexEdit.setText(CustomConfig.formatHex(newCol));",
+              "          applyLiveVisuals.run();",
+              "        }",
+              "      };",
+              "      for (int i = 0; i < slotNames.length; i++) {",
+              "        final int idx = i;",
+              "        TextView tab = new TextView(activity);",
+              "        tab.setText(slotNames[i]);",
+              "        tab.setTypeface(Typeface.DEFAULT_BOLD);",
+              "        tab.setTextSize(13f);",
+              "        tab.setPadding(dp(activity, 14), dp(activity, 8), dp(activity, 14), dp(activity, 8));",
+              "        LinearLayout.LayoutParams tLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
+              "        tLp.rightMargin = dp(activity, 8);",
+              "        tab.setLayoutParams(tLp);",
+              "        tab.setOnClickListener(new View.OnClickListener() {",
+              "          @Override public void onClick(View v) { animatePulseTap(v); selectedSlot[0] = idx; syncSlidersFromSlot.run(); triggerPorscheTick(10, 80); }",
+              "        });",
+              "        slotTabs[i] = tab;",
+              "        slotRow.addView(tab);",
+              "      }",
+              "      slotScroll.addView(slotRow);",
+              "      root.addView(slotScroll);",
+              "      TextView presetLbl = new TextView(activity);",
+              "      presetLbl.setText(\"Готовые фирменные оттенки Telegram (в 1 тап)\");",
+              "      presetLbl.setTextColor(0xFFB0BEC5);",
+              "      presetLbl.setTextSize(13f);",
+              "      presetLbl.setPadding(0, dp(activity, 4), 0, dp(activity, 8));",
+              "      root.addView(presetLbl);",
+              "      HorizontalScrollView presetScroll = new HorizontalScrollView(activity);",
+              "      presetScroll.setHorizontalScrollBarEnabled(false);",
+              "      LinearLayout presetRow = new LinearLayout(activity);",
+              "      presetRow.setOrientation(LinearLayout.HORIZONTAL);",
+              "      int[] allPresets = new int[CustomConfig.TG_ACCENT_PRESETS.length + CustomConfig.TG_SURFACE_PRESETS.length];",
+              "      System.arraycopy(CustomConfig.TG_ACCENT_PRESETS, 0, allPresets, 0, CustomConfig.TG_ACCENT_PRESETS.length);",
+              "      System.arraycopy(CustomConfig.TG_SURFACE_PRESETS, 0, allPresets, CustomConfig.TG_ACCENT_PRESETS.length, CustomConfig.TG_SURFACE_PRESETS.length);",
+              "      for (final int pCol : allPresets) {",
+              "        final View swatch = new View(activity);",
+              "        LinearLayout.LayoutParams sLp = new LinearLayout.LayoutParams(dp(activity, 38), dp(activity, 38));",
+              "        sLp.rightMargin = dp(activity, 10);",
+              "        swatch.setLayoutParams(sLp);",
+              "        swatch.setBackground(makeTgSurface(pCol, withAlpha(Color.WHITE, 140), 19f, activity));",
+              "        swatch.setOnClickListener(new View.OnClickListener() {",
+              "          @Override public void onClick(View v) {",
+              "            animatePulseTap(swatch);",
+              "            int prev = selectedSlot[0] == 0 ? curAccent[0] : (selectedSlot[0] == 1 ? curSurface[0] : (selectedSlot[0] == 2 ? curCard[0] : curOut[0]));",
+              "            if (selectedSlot[0] == 0) { curAccent[0] = pCol; CustomConfig.setAccentColor(pCol); animateBgTransition(previewCard, curCard[0], curCard[0], CustomConfig.getCornerRadiusDp(), withAlpha(pCol, 170)); }",
+              "            else if (selectedSlot[0] == 1) { curSurface[0] = pCol; CustomConfig.setSurfaceColor(pCol); animateBgTransition(shell, prev, pCol, 0f, Color.TRANSPARENT); }",
+              "            else if (selectedSlot[0] == 2) { curCard[0] = pCol; CustomConfig.setCardColor(pCol); animateBgTransition(previewCard, prev, pCol, CustomConfig.getCornerRadiusDp(), withAlpha(curAccent[0], 170)); }",
+              "            else { curOut[0] = pCol; CustomConfig.setOutBubbleColor(pCol); animateBgTransition(outMsg, prev, pCol, CustomConfig.getCornerRadiusDp(), withAlpha(curAccent[0], 140)); }",
+              "            syncSlidersFromSlot.run(); applyLiveVisuals.run(); triggerPorscheTick(14, 100);",
+              "          }",
+              "        });",
+              "        presetRow.addView(swatch);",
+              "      }",
+              "      presetScroll.addView(presetRow);",
+              "      root.addView(presetScroll);",
+              "      LinearLayout sliderBox = new LinearLayout(activity);",
+              "      sliderBox.setOrientation(LinearLayout.VERTICAL);",
+              "      sliderBox.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));",
+              "      sliderBox.setBackground(makeTgSurface(curCard[0], withAlpha(curAccent[0], 45), CustomConfig.getCornerRadiusDp(), activity));",
+              "      LinearLayout.LayoutParams sbLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
+              "      sbLp.topMargin = dp(activity, 14);",
+              "      root.addView(sliderBox, sbLp);",
+              "      hueSeek.setMax(360);",
+              "      satSeek.setMax(100);",
+              "      valSeek.setMax(100);",
+              "      SeekBar.OnSeekBarChangeListener hsvListener = new SeekBar.OnSeekBarChangeListener() {",
+              "        @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) { if (fromUser) commitColorToSlot.run(); }",
+              "        @Override public void onStartTrackingTouch(SeekBar seekBar) {}",
+              "        @Override public void onStopTrackingTouch(SeekBar seekBar) { triggerPorscheTick(10, 70); }",
+              "      };",
+              "      hueSeek.setOnSeekBarChangeListener(hsvListener);",
+              "      satSeek.setOnSeekBarChangeListener(hsvListener);",
+              "      valSeek.setOnSeekBarChangeListener(hsvListener);",
+              "      TextView hLbl = new TextView(activity); hLbl.setText(\"Тон цвета (Hue)\"); hLbl.setTextColor(Color.WHITE); hLbl.setTextSize(13f);",
+              "      sliderBox.addView(hLbl); sliderBox.addView(hueSeek);",
+              "      TextView sLbl = new TextView(activity); sLbl.setText(\"Насыщенность\"); sLbl.setTextColor(Color.WHITE); sLbl.setTextSize(13f); sLbl.setPadding(0, dp(activity, 8), 0, 0);",
+              "      sliderBox.addView(sLbl); sliderBox.addView(satSeek);",
+              "      TextView vLbl = new TextView(activity); vLbl.setText(\"Яркость\"); vLbl.setTextColor(Color.WHITE); vLbl.setTextSize(13f); vLbl.setPadding(0, dp(activity, 8), 0, 0);",
+              "      sliderBox.addView(vLbl); sliderBox.addView(valSeek);",
+              "      TextView rLbl = new TextView(activity); rLbl.setText(\"Скругление карточек и баблов\"); rLbl.setTextColor(Color.WHITE); rLbl.setTextSize(13f); rLbl.setPadding(0, dp(activity, 10), 0, 0);",
+              "      sliderBox.addView(rLbl);",
+              "      SeekBar radSeek = new SeekBar(activity);",
+              "      radSeek.setMax(20);",
+              "      radSeek.setProgress(Math.round(CustomConfig.getCornerRadiusDp()) - 8);",
+              "      radSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {",
+              "        @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) { CustomConfig.setCornerRadiusDp(progress + 8f); applyLiveVisuals.run(); }",
+              "        @Override public void onStartTrackingTouch(SeekBar seekBar) {}",
+              "        @Override public void onStopTrackingTouch(SeekBar seekBar) {}",
+              "      });",
+              "      sliderBox.addView(radSeek);",
+              "      LinearLayout hexRow = new LinearLayout(activity);",
+              "      hexRow.setOrientation(LinearLayout.HORIZONTAL);",
+              "      hexRow.setGravity(Gravity.CENTER_VERTICAL);",
+              "      hexRow.setPadding(0, dp(activity, 12), 0, 0);",
+              "      hexEdit.setTextColor(Color.WHITE);",
+              "      hexEdit.setHint(\"#3390EC\");",
+              "      hexEdit.setHintTextColor(Color.GRAY);",
+              "      hexEdit.setSingleLine(true);",
+              "      hexRow.addView(hexEdit, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));",
+              "      TextView applyHex = new TextView(activity);",
+              "      applyHex.setText(\"Применить HEX\");",
+              "      applyHex.setTextColor(Color.WHITE);",
+              "      applyHex.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      applyHex.setPadding(dp(activity, 14), dp(activity, 9), dp(activity, 14), dp(activity, 9));",
+              "      applyHex.setBackground(makeTgSurface(curAccent[0], Color.TRANSPARENT, 12f, activity));",
+              "      applyHex.setOnClickListener(new View.OnClickListener() {",
+              "        @Override public void onClick(View v) {",
+              "          animatePulseTap(v);",
+              "          int parsed = safeParseHex(hexEdit.getText().toString(), curAccent[0]);",
+              "          if (selectedSlot[0] == 0) { curAccent[0] = parsed; CustomConfig.setAccentColor(parsed); }",
+              "          else if (selectedSlot[0] == 1) { curSurface[0] = parsed; CustomConfig.setSurfaceColor(parsed); }",
+              "          else if (selectedSlot[0] == 2) { curCard[0] = parsed; CustomConfig.setCardColor(parsed); }",
+              "          else { curOut[0] = parsed; CustomConfig.setOutBubbleColor(parsed); }",
+              "          syncSlidersFromSlot.run(); applyLiveVisuals.run(); triggerPorscheTick(14, 100);",
+              "        }",
+              "      });",
+              "      hexRow.addView(applyHex);",
+              "      sliderBox.addView(hexRow);",
+              "      TextView resetBtn = new TextView(activity);",
+              "      resetBtn.setText(\"Сбросить к стандартной теме Telegram\");",
+              "      resetBtn.setTextColor(0xFFEA5455);",
+              "      resetBtn.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      resetBtn.setGravity(Gravity.CENTER);",
+              "      resetBtn.setPadding(dp(activity, 14), dp(activity, 14), dp(activity, 14), dp(activity, 14));",
+              "      resetBtn.setOnClickListener(new View.OnClickListener() {",
+              "        @Override public void onClick(View v) {",
+              "          CustomConfig.resetCustomThemeToDefaults();",
+              "          curAccent[0] = CustomConfig.getAccentColor(); curSurface[0] = CustomConfig.getSurfaceColor();",
+              "          curCard[0] = CustomConfig.getCardColor(); curOut[0] = CustomConfig.getOutBubbleColor();",
+              "          syncSlidersFromSlot.run(); applyLiveVisuals.run(); triggerPorscheTick(16, 120);",
+              "        }",
+              "      });",
+              "      root.addView(resetBtn);",
+              "      syncSlidersFromSlot.run();",
+              "      dialog.setContentView(shell);",
+              "      dialog.show();",
               "    } catch (Throwable ignored) {}",
               "  }",
               "  public static void openMediaSendSettingsPanel(final Activity activity) {",
@@ -970,423 +1309,65 @@ jobs:
               "    try {",
               "      int accent = CustomConfig.getAccentColor();",
               "      int surface = CustomConfig.getSurfaceColor();",
-              "      int bubble = CustomConfig.getBubbleColor();",
+              "      int card = CustomConfig.getCardColor();",
               "      int textCol = CustomConfig.getTextColor();",
-              "      float cardR = CustomConfig.getCardCornerRadiusDp();",
-              "      float fontS = CustomConfig.getFontScaleMultiplier();",
+              "      float radius = CustomConfig.getCornerRadiusDp();",
+              "      final Dialog dialog = new Dialog(activity, android.R.style.Theme_DeviceDefault_NoActionBar);",
+              "      LinearLayout shell = new LinearLayout(activity);",
+              "      shell.setOrientation(LinearLayout.VERTICAL);",
+              "      shell.setBackgroundColor(surface);",
+              "      LinearLayout topBar = new LinearLayout(activity);",
+              "      topBar.setOrientation(LinearLayout.HORIZONTAL);",
+              "      topBar.setGravity(Gravity.CENTER_VERTICAL);",
+              "      topBar.setBackgroundColor(card);",
+              "      topBar.setPadding(dp(activity, 16), dp(activity, 14), dp(activity, 16), dp(activity, 14));",
+              "      TextView backBtn = new TextView(activity);",
+              "      backBtn.setText(\"←\");",
+              "      backBtn.setTextColor(accent);",
+              "      backBtn.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      backBtn.setTextSize(22f);",
+              "      backBtn.setPadding(dp(activity, 4), dp(activity, 2), dp(activity, 14), dp(activity, 2));",
+              "      backBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { dialog.dismiss(); } });",
+              "      topBar.addView(backBtn);",
+              "      TextView titleTv = new TextView(activity);",
+              "      titleTv.setText(\"Настройки отправки медиа\");",
+              "      titleTv.setTextColor(textCol);",
+              "      titleTv.setTypeface(Typeface.DEFAULT_BOLD);",
+              "      titleTv.setTextSize(18f);",
+              "      topBar.addView(titleTv);",
+              "      shell.addView(topBar);",
               "      ScrollView scroll = new ScrollView(activity);",
-              "      scroll.setBackgroundColor(surface);",
-              "      scroll.setPadding(dp(activity, 16), dp(activity, 16), dp(activity, 16), dp(activity, 24));",
               "      LinearLayout root = new LinearLayout(activity);",
               "      root.setOrientation(LinearLayout.VERTICAL);",
+              "      root.setPadding(0, dp(activity, 10), 0, dp(activity, 24));",
               "      scroll.addView(root);",
-              "      LinearLayout photoCard = new LinearLayout(activity);",
-              "      photoCard.setOrientation(LinearLayout.VERTICAL);",
-              "      photoCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));",
-              "      photoCard.setBackground(makeTgSurface(bubble, withAlpha(accent, 140), cardR, activity));",
-              "      TextView pTitle = new TextView(activity);",
-              "      pTitle.setText(\"Качество отправки фото\");",
-              "      pTitle.setTextColor(accent);",
-              "      pTitle.setTypeface(Typeface.DEFAULT_BOLD);",
-              "      pTitle.setTextSize(13f * fontS);",
-              "      photoCard.addView(pTitle);",
-              "      final TextView pVal = new TextView(activity);",
-              "      final String[] photoLabels = new String[] {\"Стандарт (85%)\", \"Высокое (95%)\", \"Оригинал (100%)\"};",
-              "      pVal.setText(\"Текущее: \" + photoLabels[CustomConfig.getPhotoSendQuality()]);",
-              "      pVal.setTextColor(textCol);",
-              "      pVal.setTextSize(13f * fontS);",
-              "      pVal.setPadding(0, dp(activity, 4), 0, dp(activity, 8));",
-              "      photoCard.addView(pVal);",
-              "      LinearLayout pBtns = new LinearLayout(activity);",
-              "      pBtns.setOrientation(LinearLayout.HORIZONTAL);",
-              "      for (int i = 0; i < 3; i++) {",
-              "        final int mode = i;",
-              "        Button b = new Button(activity);",
-              "        b.setText(i == 0 ? \"85%\" : (i == 1 ? \"95%\" : \"100%\"));",
-              "        b.setAllCaps(false);",
-              "        b.setTextColor(textCol);",
-              "        b.setBackground(makeTgSurface(withAlpha(surface, 220), withAlpha(accent, 120), 10f, activity));",
-              "        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(activity, 38), 1f);",
-              "        if (i < 2) lp.rightMargin = dp(activity, 6);",
-              "        b.setLayoutParams(lp);",
-              "        b.setOnClickListener(new View.OnClickListener() {",
-              "          @Override public void onClick(View v) { CustomConfig.setPhotoSendQuality(mode); pVal.setText(\"Текущее: \" + photoLabels[mode]); triggerPorscheTick(12, 100); }",
-              "        });",
-              "        pBtns.addView(b);",
-              "      }",
-              "      photoCard.addView(pBtns);",
-              "      LinearLayout.LayoutParams pCardLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
-              "      pCardLp.bottomMargin = dp(activity, 12);",
-              "      root.addView(photoCard, pCardLp);",
-              "      LinearLayout vidCard = new LinearLayout(activity);",
-              "      vidCard.setOrientation(LinearLayout.VERTICAL);",
-              "      vidCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));",
-              "      vidCard.setBackground(makeTgSurface(bubble, withAlpha(accent, 140), cardR, activity));",
-              "      TextView vTitle = new TextView(activity);",
-              "      vTitle.setText(\"Профиль отправки видео\");",
-              "      vTitle.setTextColor(accent);",
-              "      vTitle.setTypeface(Typeface.DEFAULT_BOLD);",
-              "      vTitle.setTextSize(13f * fontS);",
-              "      vidCard.addView(vTitle);",
-              "      final TextView vVal = new TextView(activity);",
+              "      shell.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));",
+              "      final String[] photoLabels = new String[] {\"85% (Стандарт)\", \"95% (Высокое)\", \"100% (Оригинал)\"};",
+              "      root.addView(makeTgCardRow(activity, \"Качество сжатия фото\", \"Нажми для переключения профиля сжатия\", photoLabels[CustomConfig.getPhotoSendQuality()], card, accent, textCol, radius, new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { CustomConfig.setPhotoSendQuality((CustomConfig.getPhotoSendQuality() + 1) % 3); dialog.dismiss(); openMediaSendSettingsPanel(activity); }",
+              "      }));",
               "      final String[] vidLabels = new String[] {\"Баланс\", \"Высокий битрейт\", \"Исходный файл\"};",
-              "      vVal.setText(\"Текущий: \" + vidLabels[CustomConfig.getVideoSendProfile()]);",
-              "      vVal.setTextColor(textCol);",
-              "      vVal.setTextSize(13f * fontS);",
-              "      vVal.setPadding(0, dp(activity, 4), 0, dp(activity, 8));",
-              "      vidCard.addView(vVal);",
-              "      LinearLayout vBtns = new LinearLayout(activity);",
-              "      vBtns.setOrientation(LinearLayout.HORIZONTAL);",
-              "      for (int i = 0; i < 3; i++) {",
-              "        final int prof = i;",
-              "        Button b = new Button(activity);",
-              "        b.setText(i == 0 ? \"Баланс\" : (i == 1 ? \"Высокий\" : \"Исходник\"));",
-              "        b.setAllCaps(false);",
-              "        b.setTextColor(textCol);",
-              "        b.setBackground(makeTgSurface(withAlpha(surface, 220), withAlpha(accent, 120), 10f, activity));",
-              "        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(activity, 38), 1f);",
-              "        if (i < 2) lp.rightMargin = dp(activity, 6);",
-              "        b.setLayoutParams(lp);",
-              "        b.setOnClickListener(new View.OnClickListener() {",
-              "          @Override public void onClick(View v) { CustomConfig.setVideoSendProfile(prof); vVal.setText(\"Текущий: \" + vidLabels[prof]); triggerPorscheTick(12, 100); }",
-              "        });",
-              "        vBtns.addView(b);",
-              "      }",
-              "      vidCard.addView(vBtns);",
-              "      LinearLayout.LayoutParams vCardLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
-              "      vCardLp.bottomMargin = dp(activity, 12);",
-              "      root.addView(vidCard, vCardLp);",
-              "      LinearLayout spCard = new LinearLayout(activity);",
-              "      spCard.setOrientation(LinearLayout.VERTICAL);",
-              "      spCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));",
-              "      spCard.setBackground(makeTgSurface(bubble, withAlpha(accent, 140), cardR, activity));",
-              "      TextView sTitle = new TextView(activity);",
-              "      sTitle.setText(\"Спойлеры для медиа\");",
-              "      sTitle.setTextColor(accent);",
-              "      sTitle.setTypeface(Typeface.DEFAULT_BOLD);",
-              "      sTitle.setTextSize(13f * fontS);",
-              "      spCard.addView(sTitle);",
-              "      final TextView sVal = new TextView(activity);",
-              "      final String[] spLabels = new String[] {\"Выключены\", \"Авто-спойлер\", \"Всегда спойлер\"};",
-              "      sVal.setText(\"Текущее: \" + spLabels[CustomConfig.getSpoilerMediaMode()]);",
-              "      sVal.setTextColor(textCol);",
-              "      sVal.setTextSize(13f * fontS);",
-              "      sVal.setPadding(0, dp(activity, 4), 0, dp(activity, 8));",
-              "      spCard.addView(sVal);",
-              "      LinearLayout sBtns = new LinearLayout(activity);",
-              "      sBtns.setOrientation(LinearLayout.HORIZONTAL);",
-              "      for (int i = 0; i < 3; i++) {",
-              "        final int sm = i;",
-              "        Button b = new Button(activity);",
-              "        b.setText(i == 0 ? \"Выкл\" : (i == 1 ? \"Авто\" : \"Всегда\"));",
-              "        b.setAllCaps(false);",
-              "        b.setTextColor(textCol);",
-              "        b.setBackground(makeTgSurface(withAlpha(surface, 220), withAlpha(accent, 120), 10f, activity));",
-              "        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(activity, 38), 1f);",
-              "        if (i < 2) lp.rightMargin = dp(activity, 6);",
-              "        b.setLayoutParams(lp);",
-              "        b.setOnClickListener(new View.OnClickListener() {",
-              "          @Override public void onClick(View v) { CustomConfig.setSpoilerMediaMode(sm); sVal.setText(\"Текущее: \" + spLabels[sm]); triggerPorscheTick(12, 100); }",
-              "        });",
-              "        sBtns.addView(b);",
-              "      }",
-              "      spCard.addView(sBtns);",
-              "      LinearLayout.LayoutParams sCardLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
-              "      sCardLp.bottomMargin = dp(activity, 12);",
-              "      root.addView(spCard, sCardLp);",
-              "      final Switch exifSwitch = new Switch(activity);",
-              "      exifSwitch.setText(\"Очищать EXIF / геолокацию\");",
-              "      exifSwitch.setTextColor(textCol);",
-              "      exifSwitch.setChecked(CustomConfig.isStripMediaExif());",
-              "      exifSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 6));",
-              "      exifSwitch.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { CustomConfig.toggleStripMediaExif(); exifSwitch.setChecked(CustomConfig.isStripMediaExif()); } });",
-              "      root.addView(exifSwitch);",
-              "      final Switch fileSwitch = new Switch(activity);",
-              "      fileSwitch.setText(\"Отправлять как файл без сжатия\");",
-              "      fileSwitch.setTextColor(textCol);",
-              "      fileSwitch.setChecked(CustomConfig.isSendMediaAsFile());",
-              "      fileSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 6));",
-              "      fileSwitch.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { CustomConfig.toggleSendMediaAsFile(); fileSwitch.setChecked(CustomConfig.isSendMediaAsFile()); } });",
-              "      root.addView(fileSwitch);",
-              "      final Switch silentSwitch = new Switch(activity);",
-              "      silentSwitch.setText(\"Отправлять без звука (тихо)\");",
-              "      silentSwitch.setTextColor(textCol);",
-              "      silentSwitch.setChecked(CustomConfig.isSendMediaSilently());",
-              "      silentSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 6));",
-              "      silentSwitch.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { CustomConfig.toggleSendMediaSilently(); silentSwitch.setChecked(CustomConfig.isSendMediaSilently()); } });",
-              "      root.addView(silentSwitch);",
-              "      final Switch vaultSwitch = new Switch(activity);",
-              "      vaultSwitch.setText(\"Копировать в NotesVault\");",
-              "      vaultSwitch.setTextColor(textCol);",
-              "      vaultSwitch.setChecked(CustomConfig.isAutoBackupSentToVault());",
-              "      vaultSwitch.setPadding(0, dp(activity, 6), 0, dp(activity, 8));",
-              "      vaultSwitch.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { CustomConfig.toggleAutoBackupSentToVault(); vaultSwitch.setChecked(CustomConfig.isAutoBackupSentToVault()); } });",
-              "      root.addView(vaultSwitch);",
-              "      new AlertDialog.Builder(activity).setTitle(\"Notes - Настройки отправки медиа\").setView(scroll).setPositiveButton(\"Сохранить\", null).show();",
-              "    } catch (Throwable ignored) {}",
-              "  }",
-              "  public static void openThemeStudioPanel(final Activity activity) {",
-              "    if (activity == null || activity.isFinishing()) return;",
-              "    try {",
-              "      final int initAccent = CustomConfig.getAccentColor();",
-              "      final int initSurface = CustomConfig.getSurfaceColor();",
-              "      final int initBubble = CustomConfig.getBubbleColor();",
-              "      final int initOutBubble = CustomConfig.getOutBubbleColor();",
-              "      final int initText = CustomConfig.getTextColor();",
-              "      final float initBubbleRadius = CustomConfig.getBubbleCornerRadiusDp();",
-              "      final float initCardRadius = CustomConfig.getCardCornerRadiusDp();",
-              "      final float initFontScale = CustomConfig.getFontScaleMultiplier();",
-              "      final ScrollView scroll = new ScrollView(activity);",
-              "      scroll.setBackgroundColor(initSurface);",
-              "      scroll.setPadding(dp(activity, 16), dp(activity, 16), dp(activity, 16), dp(activity, 24));",
-              "      final LinearLayout root = new LinearLayout(activity);",
-              "      root.setOrientation(LinearLayout.VERTICAL);",
-              "      scroll.addView(root);",
-              "      final LinearLayout previewCard = new LinearLayout(activity);",
-              "      previewCard.setOrientation(LinearLayout.VERTICAL);",
-              "      previewCard.setPadding(dp(activity, 16), dp(activity, 14), dp(activity, 16), dp(activity, 14));",
-              "      previewCard.setBackground(makeTgSurface(initSurface, withAlpha(initAccent, 180), initCardRadius, activity));",
-              "      final TextView previewBadge = new TextView(activity);",
-              "      previewBadge.setText(\"THEME STUDIO - КОНСТРУКТОР ТЕМ\");",
-              "      previewBadge.setTextColor(initAccent);",
-              "      previewBadge.setTypeface(Typeface.DEFAULT_BOLD);",
-              "      previewBadge.setTextSize(12f * initFontScale);",
-              "      previewCard.addView(previewBadge);",
-              "      final TextView inBubble = new TextView(activity);",
-              "      inBubble.setText(\"Входящее: любой HEX, радиус и масштаб шрифта\");",
-              "      inBubble.setTextColor(initText);",
-              "      inBubble.setTextSize(14f * initFontScale);",
-              "      inBubble.setPadding(dp(activity, 12), dp(activity, 8), dp(activity, 12), dp(activity, 8));",
-              "      inBubble.setBackground(makeTgSurface(initBubble, withAlpha(initText, 35), initBubbleRadius, activity));",
-              "      LinearLayout.LayoutParams inLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
-              "      inLp.topMargin = dp(activity, 8);",
-              "      previewCard.addView(inBubble, inLp);",
-              "      final TextView outBubble = new TextView(activity);",
-              "      outBubble.setText(\"Исходящее: свой цвет бабла и акцента\");",
-              "      outBubble.setTextColor(initText);",
-              "      outBubble.setTextSize(14f * initFontScale);",
-              "      outBubble.setPadding(dp(activity, 12), dp(activity, 8), dp(activity, 12), dp(activity, 8));",
-              "      outBubble.setBackground(makeTgSurface(withAlpha(initOutBubble, 235), withAlpha(initAccent, 150), initBubbleRadius, activity));",
-              "      LinearLayout.LayoutParams outLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
-              "      outLp.gravity = Gravity.END;",
-              "      outLp.topMargin = dp(activity, 6);",
-              "      previewCard.addView(outBubble, outLp);",
-              "      LinearLayout.LayoutParams previewLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
-              "      previewLp.bottomMargin = dp(activity, 14);",
-              "      root.addView(previewCard, previewLp);",
-              "      final LinearLayout targetCard = new LinearLayout(activity);",
-              "      targetCard.setOrientation(LinearLayout.VERTICAL);",
-              "      targetCard.setPadding(dp(activity, 14), dp(activity, 12), dp(activity, 14), dp(activity, 12));",
-              "      targetCard.setBackground(makeTgSurface(initBubble, withAlpha(initAccent, 110), initCardRadius, activity));",
-              "      final TextView targetLabel = new TextView(activity);",
-              "      targetLabel.setText(\"Элемент: Акцент (\" + CustomConfig.formatHex(initAccent) + \")\");",
-              "      targetLabel.setTextColor(initText);",
-              "      targetLabel.setTypeface(Typeface.DEFAULT_BOLD);",
-              "      targetLabel.setTextSize(13f * initFontScale);",
-              "      targetCard.addView(targetLabel);",
-              "      final int[] selectedSlot = new int[] {0};",
-              "      final EditText hexInput = new EditText(activity);",
-              "      hexInput.setText(CustomConfig.formatHex(initAccent));",
-              "      hexInput.setTextColor(initText);",
-              "      hexInput.setHint(\"#RRGGBB\");",
-              "      hexInput.setHintTextColor(Color.GRAY);",
-              "      hexInput.setSingleLine(true);",
-              "      hexInput.setTextSize(14f * initFontScale);",
-              "      final Runnable refreshPreview = new Runnable() {",
-              "        @Override public void run() {",
-              "          int ac = CustomConfig.getAccentColor();",
-              "          int sf = CustomConfig.getSurfaceColor();",
-              "          int ib = CustomConfig.getBubbleColor();",
-              "          int ob = CustomConfig.getOutBubbleColor();",
-              "          int tx = CustomConfig.getTextColor();",
-              "          float br = CustomConfig.getBubbleCornerRadiusDp();",
-              "          float cr = CustomConfig.getCardCornerRadiusDp();",
-              "          float fs = CustomConfig.getFontScaleMultiplier();",
-              "          scroll.setBackgroundColor(sf);",
-              "          previewCard.setBackground(makeTgSurface(sf, withAlpha(ac, 180), cr, activity));",
-              "          previewBadge.setTextColor(ac);",
-              "          previewBadge.setTextSize(12f * fs);",
-              "          inBubble.setTextColor(tx);",
-              "          inBubble.setTextSize(14f * fs);",
-              "          inBubble.setBackground(makeTgSurface(ib, withAlpha(tx, 35), br, activity));",
-              "          outBubble.setTextColor(tx);",
-              "          outBubble.setTextSize(14f * fs);",
-              "          outBubble.setBackground(makeTgSurface(withAlpha(ob, 235), withAlpha(ac, 150), br, activity));",
-              "          targetCard.setBackground(makeTgSurface(ib, withAlpha(ac, 110), cr, activity));",
-              "          targetLabel.setTextColor(tx);",
-              "          targetLabel.setTextSize(13f * fs);",
-              "          hexInput.setTextColor(tx);",
-              "          hexInput.setTextSize(14f * fs);",
-              "          String slotName = \"Акцент\"; int activeCol = ac;",
-              "          if (selectedSlot[0] == 1) { slotName = \"Фон\"; activeCol = sf; }",
-              "          else if (selectedSlot[0] == 2) { slotName = \"Бабл входящих\"; activeCol = ib; }",
-              "          else if (selectedSlot[0] == 3) { slotName = \"Бабл исходящих\"; activeCol = ob; }",
-              "          else if (selectedSlot[0] == 4) { slotName = \"Текст\"; activeCol = tx; }",
-              "          targetLabel.setText(\"Элемент: \" + slotName + \" (\" + CustomConfig.formatHex(activeCol) + \")\");",
-              "        }",
-              "      };",
-              "      final ColorApplyCallback applyColorToSlot = new ColorApplyCallback() {",
-              "        @Override public void onApply(int col) {",
-              "          if (selectedSlot[0] == 0) CustomConfig.setAccentColor(col);",
-              "          else if (selectedSlot[0] == 1) CustomConfig.setSurfaceColor(col);",
-              "          else if (selectedSlot[0] == 2) CustomConfig.setBubbleColor(col);",
-              "          else if (selectedSlot[0] == 3) CustomConfig.setOutBubbleColor(col);",
-              "          else if (selectedSlot[0] == 4) CustomConfig.setTextColor(col);",
-              "          hexInput.setText(CustomConfig.formatHex(col));",
-              "          refreshPreview.run(); triggerPorscheTick(14, 120);",
-              "        }",
-              "      };",
-              "      HorizontalScrollView slotScroll = new HorizontalScrollView(activity);",
-              "      slotScroll.setHorizontalScrollBarEnabled(false);",
-              "      slotScroll.setPadding(0, dp(activity, 8), 0, dp(activity, 6));",
-              "      LinearLayout slotRow = new LinearLayout(activity);",
-              "      slotRow.setOrientation(LinearLayout.HORIZONTAL);",
-              "      String[] slotTitles = new String[] {\"Акцент\", \"Фон\", \"Входящие\", \"Исходящие\", \"Текст\"};",
-              "      for (int i = 0; i < slotTitles.length; i++) {",
-              "        final int idx = i;",
-              "        Button sb = new Button(activity);",
-              "        sb.setText(slotTitles[i]);",
-              "        sb.setAllCaps(false);",
-              "        sb.setTextColor(initText);",
-              "        sb.setBackground(makeTgSurface(withAlpha(initSurface, 200), withAlpha(initAccent, 120), 12f, activity));",
-              "        LinearLayout.LayoutParams sLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 38));",
-              "        sLp.rightMargin = dp(activity, 6);",
-              "        sb.setLayoutParams(sLp);",
-              "        sb.setOnClickListener(new View.OnClickListener() {",
-              "          @Override public void onClick(View v) {",
-              "            selectedSlot[0] = idx;",
-              "            int curCol = CustomConfig.getAccentColor();",
-              "            if (idx == 1) curCol = CustomConfig.getSurfaceColor();",
-              "            else if (idx == 2) curCol = CustomConfig.getBubbleColor();",
-              "            else if (idx == 3) curCol = CustomConfig.getOutBubbleColor();",
-              "            else if (idx == 4) curCol = CustomConfig.getTextColor();",
-              "            hexInput.setText(CustomConfig.formatHex(curCol)); refreshPreview.run();",
-              "          }",
-              "        });",
-              "        slotRow.addView(sb);",
-              "      }",
-              "      slotScroll.addView(slotRow);",
-              "      targetCard.addView(slotScroll);",
-              "      LinearLayout hexRow = new LinearLayout(activity);",
-              "      hexRow.setOrientation(LinearLayout.HORIZONTAL);",
-              "      hexRow.setGravity(Gravity.CENTER_VERTICAL);",
-              "      LinearLayout.LayoutParams hLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);",
-              "      hLp.rightMargin = dp(activity, 8);",
-              "      hexRow.addView(hexInput, hLp);",
-              "      Button applyHexBtn = new Button(activity);",
-              "      applyHexBtn.setText(\"Применить\");",
-              "      applyHexBtn.setAllCaps(false);",
-              "      applyHexBtn.setBackgroundColor(initAccent);",
-              "      applyHexBtn.setTextColor(Color.WHITE);",
-              "      applyHexBtn.setOnClickListener(new View.OnClickListener() {",
-              "        @Override public void onClick(View v) {",
-              "          int fallback = CustomConfig.getAccentColor();",
-              "          if (selectedSlot[0] == 1) fallback = CustomConfig.getSurfaceColor();",
-              "          else if (selectedSlot[0] == 2) fallback = CustomConfig.getBubbleColor();",
-              "          else if (selectedSlot[0] == 3) fallback = CustomConfig.getOutBubbleColor();",
-              "          else if (selectedSlot[0] == 4) fallback = CustomConfig.getTextColor();",
-              "          applyColorToSlot.onApply(safeParseHex(hexInput.getText().toString(), fallback));",
-              "        }",
-              "      });",
-              "      hexRow.addView(applyHexBtn);",
-              "      targetCard.addView(hexRow);",
-              "      LinearLayout.LayoutParams tLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
-              "      tLp.bottomMargin = dp(activity, 12);",
-              "      root.addView(targetCard, tLp);",
-              "      TextView swLabel = new TextView(activity);",
-              "      swLabel.setText(\"Готовые оттенки для выбранного элемента\");",
-              "      swLabel.setTextColor(initText);",
-              "      swLabel.setTypeface(Typeface.DEFAULT_BOLD);",
-              "      swLabel.setTextSize(13f * initFontScale);",
-              "      swLabel.setPadding(0, 0, 0, dp(activity, 6));",
-              "      root.addView(swLabel);",
-              "      HorizontalScrollView swScroll = new HorizontalScrollView(activity);",
-              "      swScroll.setHorizontalScrollBarEnabled(false);",
-              "      LinearLayout swRow = new LinearLayout(activity);",
-              "      swRow.setOrientation(LinearLayout.HORIZONTAL);",
-              "      int[] combinedSwatches = new int[CustomConfig.SWATCH_PALETTE.length + CustomConfig.SURFACE_PALETTE.length + CustomConfig.BUBBLE_PALETTE.length];",
-              "      System.arraycopy(CustomConfig.SWATCH_PALETTE, 0, combinedSwatches, 0, CustomConfig.SWATCH_PALETTE.length);",
-              "      System.arraycopy(CustomConfig.SURFACE_PALETTE, 0, combinedSwatches, CustomConfig.SWATCH_PALETTE.length, CustomConfig.SURFACE_PALETTE.length);",
-              "      System.arraycopy(CustomConfig.BUBBLE_PALETTE, 0, combinedSwatches, CustomConfig.SWATCH_PALETTE.length + CustomConfig.SURFACE_PALETTE.length, CustomConfig.BUBBLE_PALETTE.length);",
-              "      for (final int sw : combinedSwatches) {",
-              "        View dot = new View(activity);",
-              "        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(activity, 34), dp(activity, 34));",
-              "        dotLp.rightMargin = dp(activity, 8);",
-              "        dot.setLayoutParams(dotLp);",
-              "        dot.setBackground(makeTgSurface(sw, Color.WHITE, 17f, activity));",
-              "        dot.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { applyColorToSlot.onApply(sw); } });",
-              "        swRow.addView(dot);",
-              "      }",
-              "      swScroll.addView(swRow);",
-              "      LinearLayout.LayoutParams swScrollLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);",
-              "      swScrollLp.bottomMargin = dp(activity, 14);",
-              "      root.addView(swScroll, swScrollLp);",
-              "      final TextView brLabel = new TextView(activity);",
-              "      brLabel.setText(\"Скругление баблов: \" + Math.round(initBubbleRadius) + \" dp\");",
-              "      brLabel.setTextColor(initText);",
-              "      brLabel.setTextSize(13f * initFontScale);",
-              "      root.addView(brLabel);",
-              "      final SeekBar brSeek = new SeekBar(activity);",
-              "      brSeek.setMax(28);",
-              "      brSeek.setProgress(Math.max(0, Math.min(28, Math.round(initBubbleRadius) - 4)));",
-              "      brSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {",
-              "        @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) { float val = progress + 4f; CustomConfig.setBubbleCornerRadiusDp(val); brLabel.setText(\"Скругление баблов: \" + Math.round(val) + \" dp\"); refreshPreview.run(); }",
-              "        @Override public void onStartTrackingTouch(SeekBar seekBar) {}",
-              "        @Override public void onStopTrackingTouch(SeekBar seekBar) {}",
-              "      });",
-              "      root.addView(brSeek);",
-              "      final TextView crLabel = new TextView(activity);",
-              "      crLabel.setText(\"Скругление карточек: \" + Math.round(initCardRadius) + \" dp\");",
-              "      crLabel.setTextColor(initText);",
-              "      crLabel.setTextSize(13f * initFontScale);",
-              "      crLabel.setPadding(0, dp(activity, 6), 0, 0);",
-              "      root.addView(crLabel);",
-              "      final SeekBar crSeek = new SeekBar(activity);",
-              "      crSeek.setMax(30);",
-              "      crSeek.setProgress(Math.max(0, Math.min(30, Math.round(initCardRadius) - 6)));",
-              "      crSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {",
-              "        @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) { float val = progress + 6f; CustomConfig.setCardCornerRadiusDp(val); crLabel.setText(\"Скругление карточек: \" + Math.round(val) + \" dp\"); refreshPreview.run(); }",
-              "        @Override public void onStartTrackingTouch(SeekBar seekBar) {}",
-              "        @Override public void onStopTrackingTouch(SeekBar seekBar) {}",
-              "      });",
-              "      root.addView(crSeek);",
-              "      final TextView fsLabel = new TextView(activity);",
-              "      fsLabel.setText(\"Масштаб шрифта: \" + String.format(\"%.2fx\", initFontScale));",
-              "      fsLabel.setTextColor(initText);",
-              "      fsLabel.setTextSize(13f * initFontScale);",
-              "      fsLabel.setPadding(0, dp(activity, 6), 0, 0);",
-              "      root.addView(fsLabel);",
-              "      final SeekBar fsSeek = new SeekBar(activity);",
-              "      fsSeek.setMax(50);",
-              "      fsSeek.setProgress(Math.max(0, Math.min(50, Math.round((initFontScale - 0.85f) * 100f))));",
-              "      fsSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {",
-              "        @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) { float val = 0.85f + (progress / 100f); CustomConfig.setFontScaleMultiplier(val); fsLabel.setText(\"Масштаб шрифта: \" + String.format(\"%.2fx\", val)); refreshPreview.run(); }",
-              "        @Override public void onStartTrackingTouch(SeekBar seekBar) {}",
-              "        @Override public void onStopTrackingTouch(SeekBar seekBar) {}",
-              "      });",
-              "      root.addView(fsSeek);",
-              "      final Switch compactSwitch = new Switch(activity);",
-              "      compactSwitch.setText(\"Компактный интервал сообщений\");",
-              "      compactSwitch.setTextColor(initText);",
-              "      compactSwitch.setChecked(CustomConfig.isCompactMessageSpacing());",
-              "      compactSwitch.setPadding(0, dp(activity, 10), 0, dp(activity, 8));",
-              "      compactSwitch.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { CustomConfig.toggleCompactMessageSpacing(); compactSwitch.setChecked(CustomConfig.isCompactMessageSpacing()); } });",
-              "      root.addView(compactSwitch);",
-              "      Button resetBtn = new Button(activity);",
-              "      resetBtn.setText(\"Сбросить тему по умолчанию\");",
-              "      resetBtn.setAllCaps(false);",
-              "      resetBtn.setOnClickListener(new View.OnClickListener() {",
-              "        @Override public void onClick(View v) {",
-              "          CustomConfig.resetCustomThemeToDefaults();",
-              "          brSeek.setProgress(Math.round(CustomConfig.getBubbleCornerRadiusDp()) - 4);",
-              "          crSeek.setProgress(Math.round(CustomConfig.getCardCornerRadiusDp()) - 6);",
-              "          fsSeek.setProgress(Math.round((CustomConfig.getFontScaleMultiplier() - 0.85f) * 100f));",
-              "          compactSwitch.setChecked(CustomConfig.isCompactMessageSpacing());",
-              "          selectedSlot[0] = 0; hexInput.setText(CustomConfig.formatHex(CustomConfig.getAccentColor())); refreshPreview.run();",
-              "        }",
-              "      });",
-              "      root.addView(resetBtn);",
-              "      new AlertDialog.Builder(activity).setTitle(\"Notes - Панель настройки тем\").setView(scroll).setPositiveButton(\"Готово\", null).show();",
+              "      root.addView(makeTgCardRow(activity, \"Профиль видео\", \"Нажми для выбора качества видео\", vidLabels[CustomConfig.getVideoSendProfile()], card, accent, textCol, radius, new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { CustomConfig.setVideoSendProfile((CustomConfig.getVideoSendProfile() + 1) % 3); dialog.dismiss(); openMediaSendSettingsPanel(activity); }",
+              "      }));",
+              "      final String[] spLabels = new String[] {\"Выкл\", \"Авто\", \"Всегда\"};",
+              "      root.addView(makeTgCardRow(activity, \"Спойлер для медиа\", \"Автоматическое скрытие фото и видео под спойлер\", spLabels[CustomConfig.getSpoilerMediaMode()], card, accent, textCol, radius, new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { CustomConfig.setSpoilerMediaMode((CustomConfig.getSpoilerMediaMode() + 1) % 3); dialog.dismiss(); openMediaSendSettingsPanel(activity); }",
+              "      }));",
+              "      root.addView(makeTgSwitchCard(activity, \"Очищать EXIF и геолокацию\", \"Удалять модель камеры и координаты перед отправкой\", CustomConfig.isStripMediaExif(), card, accent, textCol, radius, new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { CustomConfig.toggleStripMediaExif(); }",
+              "      }));",
+              "      root.addView(makeTgSwitchCard(activity, \"Отправлять без сжатия (как файл)\", \"Передача исходного изображения без перекодирования\", CustomConfig.isSendMediaAsFile(), card, accent, textCol, radius, new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { CustomConfig.toggleSendMediaAsFile(); }",
+              "      }));",
+              "      root.addView(makeTgSwitchCard(activity, \"Тихая отправка без звука\", \"Получатель не услышит звуковое уведомление\", CustomConfig.isSendMediaSilently(), card, accent, textCol, radius, new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { CustomConfig.toggleSendMediaSilently(); }",
+              "      }));",
+              "      root.addView(makeTgSwitchCard(activity, \"Автокопия в NotesVault\", \"Сохранять копии в Pictures/NotesVault и Movies/NotesVault\", CustomConfig.isAutoBackupSentToVault(), card, accent, textCol, radius, new View.OnClickListener() {",
+              "        @Override public void onClick(View v) { CustomConfig.toggleAutoBackupSentToVault(); }",
+              "      }));",
+              "      dialog.setContentView(shell);",
+              "      dialog.show();",
               "    } catch (Throwable ignored) {}",
               "  }",
               "  public static void refreshDisplayAndGuestGuard(Activity activity) {",
@@ -1426,7 +1407,7 @@ jobs:
               "  }",
               "  public static File saveSecretMediaToVault(String sourcePath, boolean isVideo) {",
               "    try {",
-              "      if (CustomConfig.isGuestHandoverActive() || TextUtils.isEmpty(sourcePath)) return null;",
+              "      if (!CustomConfig.isSaveSecretMediaEnabled(0L) || TextUtils.isEmpty(sourcePath)) return null;",
               "      File src = new File(sourcePath);",
               "      if (!src.exists() || !src.canRead()) return null;",
               "      File baseDir = Environment.getExternalStoragePublicDirectory(isVideo ? Environment.DIRECTORY_MOVIES : Environment.DIRECTORY_PICTURES);",
@@ -1521,43 +1502,26 @@ jobs:
               f.write("\n".join(whisper_lines) + "\n")
           diag("WHISPER", f"Wrote {h_dir}/LocalWhisperHelper.java ({len(whisper_lines)} lines)")
 
-          # 9. Patch MessagesStorage & MessagesController
-          for ms_path in glob.glob("TMessagesProj/src/main/java/**/MessagesStorage.java", recursive=True):
-              try:
-                  with open(ms_path, "r", encoding="utf-8") as f:
-                      ms = f.read()
-              except Exception:
-                  continue
-              ms_new, c_ms, st_ms = inject_into_method_body(
-                  ms,
-                  r'public\s+void\s+markMessagesAsDeleted\s*\([^)]*\)',
-                  '        try { org.telegram.messenger.CustomConfig.markDeletedLocally(0L, 0); } catch (Throwable ignored) {}',
-                  "org.telegram.messenger.CustomConfig.markDeletedLocally(0L, 0)"
-              )
-              if c_ms > 0:
-                  with open(ms_path, "w", encoding="utf-8") as f:
-                      f.write(ms_new)
-              diag("MSG_STORAGE", f"Patched {ms_path} count={c_ms} status={st_ms}")
-
+          # 9. Patch MessagesController & MessagesStorage (Anti-Delete, Ghost Read, No Typing)
           for mc_path in glob.glob("TMessagesProj/src/main/java/**/MessagesController.java", recursive=True):
               try:
                   with open(mc_path, "r", encoding="utf-8") as f:
                       mc = f.read()
               except Exception:
                   continue
-              mc_new, c_del, st_del = inject_into_method_body(
+              mc_new, c_del, st_del = inject_at_method_start(
                   mc,
                   r'public\s+void\s+deleteMessages\s*\([^)]*\)',
-                  '        if (org.telegram.messenger.CustomConfig.isGuestHandoverActive()) return;',
-                  "if (org.telegram.messenger.CustomConfig.isGuestHandoverActive()) return;"
+                  '        if (org.telegram.messenger.CustomConfig.isGuestHandoverActive()) return;\n        try { org.telegram.messenger.CustomConfig.markDeletedLocally(0L, 0); } catch (Throwable ignored) {}',
+                  "org.telegram.messenger.CustomConfig.markDeletedLocally(0L, 0)"
               )
-              mc_new, c_typ, st_typ = inject_into_method_body(
+              mc_new, c_typ, st_typ = inject_at_method_start(
                   mc_new,
-                  r'public\s+void\s+sendTyping\s*\([^)]*\)',
+                  r'(?:public|private|protected)\s+void\s+sendTyping\s*\([^)]*\)',
                   '        if (org.telegram.messenger.CustomConfig.isNoTyping(0L)) return;',
                   "org.telegram.messenger.CustomConfig.isNoTyping(0L)"
               )
-              mc_new, c_rd, st_rd = inject_into_method_body(
+              mc_new, c_rd, st_rd = inject_at_method_start(
                   mc_new,
                   r'public\s+void\s+markDialogAsRead\s*\([^)]*\)',
                   '        if (org.telegram.messenger.CustomConfig.isGhostRead(0L)) return;',
@@ -1568,137 +1532,200 @@ jobs:
                       f.write(mc_new)
               diag("MSG_CTRL", f"Patched {mc_path} del={c_del}({st_del}) typ={c_typ}({st_typ}) read={c_rd}({st_rd})")
 
-          # 10. Patch ChatActivity, DialogsActivity & SettingsActivity with balanced brace click injection
-          notes_menu_id = 99101
-
-          ca_files = glob.glob("TMessagesProj/src/main/java/**/ChatActivity.java", recursive=True)
-          diag("UI_CHAT", f"Found {len(ca_files)} ChatActivity.java files: {ca_files}")
-          for ca_path in ca_files:
+          for ms_path in glob.glob("TMessagesProj/src/main/java/**/MessagesStorage.java", recursive=True):
               try:
-                  with open(ca_path, "r", encoding="utf-8") as f:
-                      ca = f.read()
-              except Exception as e:
-                  diag("UI_CHAT", f"Read fail {ca_path}: {e}")
+                  with open(ms_path, "r", encoding="utf-8") as f:
+                      ms = f.read()
+              except Exception:
                   continue
-              ca, c_create, st_create = inject_into_method_body(
-                  ca,
-                  r'public\s+boolean\s+onFragmentCreate\s*\(\s*\)',
-                  '        try { org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity()); } catch (Throwable ignored) {}',
-                  "org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity())"
+              ms_new, c_ms, st_ms = inject_at_method_start(
+                  ms,
+                  r'(?:public|private|protected)\s+void\s+markMessagesAsDeleted\s*\([^)]*\)',
+                  '        try { if (org.telegram.messenger.CustomConfig.isSaveDeletedEnabled(0L)) { org.telegram.messenger.CustomConfig.markDeletedLocally(0L, 0); return; } } catch (Throwable ignored) {}',
+                  "org.telegram.messenger.CustomConfig.isSaveDeletedEnabled(0L)"
               )
-              add_sub_snippet = f'            try {{ if (headerItem != null) headerItem.addSubItem({notes_menu_id}, "Notes - Панель функций [v3]"); }} catch (Throwable ignored) {{}}'
-              c_menu = 0
-              st_menu = "skipped"
-              if f"headerItem.addSubItem({notes_menu_id}" not in ca:
-                  ca, c_menu, st_menu = inject_into_method_body(
-                      ca,
-                      r'(?:public\s+boolean\s+onFragmentCreate\s*\(\s*\)|public\s+View\s+createView\s*\([^)]*\))',
-                      add_sub_snippet,
-                      f"headerItem.addSubItem({notes_menu_id}"
+              if c_ms == 0:
+                  ms_new, c_ms, st_ms = inject_at_method_start(
+                      ms,
+                      r'(?:public|private|protected)\s+(?:ArrayList<[^>]+>|int|boolean)\s+markMessagesAsDeleted\s*\([^)]*\)',
+                      '        try { if (org.telegram.messenger.CustomConfig.isSaveDeletedEnabled(0L)) { org.telegram.messenger.CustomConfig.markDeletedLocally(0L, 0); } } catch (Throwable ignored) {}',
+                      "org.telegram.messenger.CustomConfig.isSaveDeletedEnabled(0L)"
                   )
-              click_snippet = f'        if (id == {notes_menu_id}) {{ try {{ org.telegram.messenger.LocalWhisperHelper.openNotesMainHub(getParentActivity(), dialog_id); }} catch (Throwable ignored) {{}} return; }}'
-              ca, c_click, st_click = inject_into_method_body(
-                  ca,
-                  r'public\s+void\s+onMenuItemClick\s*\(\s*int\s+id\s*\)',
-                  click_snippet,
-                  f"if (id == {notes_menu_id})"
-              )
-              if (c_create + c_menu + c_click) > 0:
-                  with open(ca_path, "w", encoding="utf-8") as f:
-                      f.write(ca)
-              diag("UI_CHAT", f"Patched {ca_path}: onCreate={c_create}({st_create}), menuAdd={c_menu}({st_menu}), click={c_click}({st_click})")
+              if c_ms > 0:
+                  with open(ms_path, "w", encoding="utf-8") as f:
+                      f.write(ms_new)
+              diag("MSG_STORAGE", f"Patched {ms_path} del={c_ms}({st_ms})")
 
-          da_files = glob.glob("TMessagesProj/src/main/java/**/DialogsActivity.java", recursive=True)
-          diag("UI_DIALOGS", f"Found {len(da_files)} DialogsActivity.java files: {da_files}")
-          for da_path in da_files:
-              try:
-                  with open(da_path, "r", encoding="utf-8") as f:
-                      da = f.read()
-              except Exception as e:
-                  diag("UI_DIALOGS", f"Read fail {da_path}: {e}")
-                  continue
-              da, c_da, st_da = inject_into_method_body(
-                  da,
-                  r'public\s+boolean\s+onFragmentCreate\s*\(\s*\)',
-                  '        try { org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity()); } catch (Throwable ignored) {}',
-                  "org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity())"
-              )
-              da_sub_snippet = f'            try {{ if (otherItem != null) otherItem.addSubItem({notes_menu_id}, "Notes - Панель функций [v3]"); }} catch (Throwable ignored) {{}}'
-              c_da_menu = 0
-              st_da_menu = "skipped"
-              if f"otherItem.addSubItem({notes_menu_id}" not in da:
-                  da, c_da_menu, st_da_menu = inject_into_method_body(
-                      da,
-                      r'(?:public\s+boolean\s+onFragmentCreate\s*\(\s*\)|public\s+View\s+createView\s*\([^)]*\))',
-                      da_sub_snippet,
-                      f"otherItem.addSubItem({notes_menu_id}"
-                  )
-              da_click_snippet = f'        if (id == {notes_menu_id}) {{ try {{ org.telegram.messenger.LocalWhisperHelper.openNotesMainHub(getParentActivity(), 0L); }} catch (Throwable ignored) {{}} return; }}'
-              da, c_da_click, st_da_click = inject_into_method_body(
-                  da,
-                  r'public\s+void\s+onMenuItemClick\s*\(\s*int\s+id\s*\)',
-                  da_click_snippet,
-                  f"if (id == {notes_menu_id})"
-              )
-              if (c_da + c_da_menu + c_da_click) > 0:
-                  with open(da_path, "w", encoding="utf-8") as f:
-                      f.write(da)
-              diag("UI_DIALOGS", f"Patched {da_path}: onCreate={c_da}({st_da}), menuAdd={c_da_menu}({st_da_menu}), click={c_da_click}({st_da_click})")
-
-          st_files = glob.glob("TMessagesProj/src/main/java/**/SettingsActivity.java", recursive=True)
-          diag("UI_SETTINGS", f"Found {len(st_files)} SettingsActivity.java files: {st_files}")
-          for st_path in st_files:
-              try:
-                  with open(st_path, "r", encoding="utf-8") as f:
-                      st = f.read()
-              except Exception as e:
-                  diag("UI_SETTINGS", f"Read fail {st_path}: {e}")
-                  continue
-              st, c_st, st_st = inject_into_method_body(
-                  st,
-                  r'public\s+boolean\s+onFragmentCreate\s*\(\s*\)',
-                  '        try { org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity()); } catch (Throwable ignored) {}',
-                  "org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity())"
-              )
-              st_sub_snippet = f'            try {{ if (otherItem != null) otherItem.addSubItem({notes_menu_id}, "Notes - Панель функций [v3]"); }} catch (Throwable ignored) {{}}'
-              c_st_menu = 0
-              st_st_menu = "skipped"
-              if f"otherItem.addSubItem({notes_menu_id}" not in st:
-                  st, c_st_menu, st_st_menu = inject_into_method_body(
-                      st,
-                      r'(?:public\s+boolean\s+onFragmentCreate\s*\(\s*\)|public\s+View\s+createView\s*\([^)]*\))',
-                      st_sub_snippet,
-                      f"otherItem.addSubItem({notes_menu_id}"
-                  )
-              st_click_snippet = f'        if (id == {notes_menu_id}) {{ try {{ org.telegram.messenger.LocalWhisperHelper.openNotesMainHub(getParentActivity(), 0L); }} catch (Throwable ignored) {{}} return; }}'
-              st, c_st_click, st_st_click = inject_into_method_body(
-                  st,
-                  r'public\s+void\s+onMenuItemClick\s*\(\s*int\s+id\s*\)',
-                  st_click_snippet,
-                  f"if (id == {notes_menu_id})"
-              )
-              if (c_st + c_st_menu + c_st_click) > 0:
-                  with open(st_path, "w", encoding="utf-8") as f:
-                      f.write(st)
-              diag("UI_SETTINGS", f"Patched {st_path}: onCreate={c_st}({st_st}), menuAdd={c_st_menu}({st_st_menu}), click={c_st_click}({st_st_click})")
-
-          # 11. Patch SecretMediaViewer: Keep TTL Media & Save to NotesVault (unless Stock Mode or Guest Mode)
           for sm_path in glob.glob("TMessagesProj/src/main/java/**/SecretMediaViewer.java", recursive=True):
               try:
                   with open(sm_path, "r", encoding="utf-8") as f:
                       sm = f.read()
               except Exception:
                   continue
-              sm_new, c_sm, st_sm = inject_into_method_body(
+              sm_new, c_sm, st_sm = inject_at_method_start(
                   sm,
-                  r'(?:private|public|protected)?\s*void\s+setCurrentImage\s*\([^)]*\)',
-                  '        try { if (!org.telegram.messenger.CustomConfig.isGuestHandoverActive()) org.telegram.messenger.LocalWhisperHelper.saveSecretMediaToVault(null, false); } catch (Throwable ignored) {}',
-                  "org.telegram.messenger.LocalWhisperHelper.saveSecretMediaToVault(null, false)"
+                  r'(?:public|private|protected)\s+void\s+openMedia\s*\([^)]*\)',
+                  '        try { if (org.telegram.messenger.CustomConfig.isSaveSecretMediaEnabled(0L) && currentMessageObject != null && currentMessageObject.messageOwner != null && currentMessageObject.messageOwner.attachPath != null) { org.telegram.messenger.LocalWhisperHelper.saveSecretMediaToVault(currentMessageObject.messageOwner.attachPath, currentMessageObject.isVideo()); } } catch (Throwable ignored) {}',
+                  "org.telegram.messenger.CustomConfig.isSaveSecretMediaEnabled(0L)"
               )
               if c_sm > 0:
                   with open(sm_path, "w", encoding="utf-8") as f:
                       f.write(sm_new)
-              diag("SECRET_MEDIA", f"Patched {sm_path} count={c_sm} status={st_sm}")
+              diag("SECRET_MEDIA", f"Patched {sm_path} openMedia={c_sm}({st_sm})")
+
+          # 10. Direct OnClickListener UI Hooks in SettingsActivity, ChatActivity & DialogsActivity
+          notes_menu_id = 99109
+          ui_hooks_ok = 0
+
+          # 10A. SettingsActivity
+          for st_path in glob.glob("TMessagesProj/src/main/java/**/SettingsActivity.java", recursive=True):
+              try:
+                  with open(st_path, "r", encoding="utf-8") as f:
+                      st = f.read()
+              except Exception:
+                  continue
+              st, c_st_cr, st_st_cr = inject_at_method_start(
+                  st,
+                  r'public\s+boolean\s+onFragmentCreate\s*\(\s*\)',
+                  '        try { org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity()); } catch (Throwable ignored) {}',
+                  "org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity())"
+              )
+              st_menu_snippet = f"""
+                      try {{
+                          if (actionBar != null) {{
+                              org.telegram.ui.ActionBar.ActionBarMenu notesTopMenu = actionBar.createMenu();
+                              if (notesTopMenu != null) {{
+                                  org.telegram.ui.ActionBar.ActionBarMenuItem notesBtn = notesTopMenu.addItem({notes_menu_id}, org.telegram.messenger.R.drawable.ic_ab_other);
+                                  notesBtn.setContentDescription("Notes");
+                                  notesBtn.setOnClickListener(new android.view.View.OnClickListener() {{
+                                      @Override
+                                      public void onClick(android.view.View v) {{
+                                          org.telegram.messenger.LocalWhisperHelper.openNotesMainHub(getParentActivity(), 0L);
+                                      }}
+                                  }});
+                              }}
+                          }}
+                      }} catch (Throwable ignored) {{}}
+              """
+              st, c_st_menu, st_st_menu = inject_after_statement_in_method(
+                  st,
+                  r'public\s+View\s+createView\s*\([^)]*\)',
+                  r'actionBar\.setActionBarMenuOnItemClick\s*\([^;]*\)\s*;',
+                  st_menu_snippet,
+                  f"notesTopMenu.addItem({notes_menu_id}"
+              )
+              if c_st_menu == 0:
+                  st, c_st_menu, st_st_menu = inject_after_statement_in_method(
+                      st,
+                      r'public\s+View\s+createView\s*\([^)]*\)',
+                      r'super\.createView\s*\([^)]*\)\s*;',
+                      st_menu_snippet,
+                      f"notesTopMenu.addItem({notes_menu_id}"
+                  )
+              if c_st_menu == 0:
+                  st, c_st_menu, st_st_menu = inject_after_statement_in_method(
+                      st,
+                      r'public\s+View\s+createView\s*\([^)]*\)',
+                      r'actionBar\.createMenu\s*\(\s*\)\s*;',
+                      st_menu_snippet,
+                      f"notesTopMenu.addItem({notes_menu_id}"
+                  )
+              if (c_st_cr + c_st_menu) > 0:
+                  with open(st_path, "w", encoding="utf-8") as f:
+                      f.write(st)
+              if c_st_menu > 0:
+                  ui_hooks_ok += 1
+              diag("UI_SETTINGS", f"Patched {st_path}: onCreate={c_st_cr}({st_st_cr}), directMenu={c_st_menu}({st_st_menu})")
+
+          # 10B. ChatActivity
+          for ca_path in glob.glob("TMessagesProj/src/main/java/**/ChatActivity.java", recursive=True):
+              try:
+                  with open(ca_path, "r", encoding="utf-8") as f:
+                      ca = f.read()
+              except Exception:
+                  continue
+              ca, c_ca_cr, st_ca_cr = inject_at_method_start(
+                  ca,
+                  r'public\s+boolean\s+onFragmentCreate\s*\(\s*\)',
+                  '        try { org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity()); } catch (Throwable ignored) {}',
+                  "org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity())"
+              )
+              ca_sub_snippet = f"""
+                      try {{
+                          if (headerItem != null) {{
+                              android.view.View notesChatSub = headerItem.addSubItem({notes_menu_id}, "Notes • Центр управления");
+                              if (notesChatSub != null) {{
+                                  notesChatSub.setOnClickListener(new android.view.View.OnClickListener() {{
+                                      @Override
+                                      public void onClick(android.view.View v) {{
+                                          headerItem.closeSubMenu();
+                                          org.telegram.messenger.LocalWhisperHelper.openNotesMainHub(getParentActivity(), dialog_id);
+                                      }}
+                                  }});
+                              }}
+                          }}
+                      }} catch (Throwable ignored) {{}}
+              """
+              ca, c_ca_menu, st_ca_menu = inject_after_statement_in_method(
+                  ca,
+                  r'public\s+View\s+createView\s*\([^)]*\)',
+                  r'headerItem\s*=\s*menu\.addItem\s*\([^;]*\)\s*;',
+                  ca_sub_snippet,
+                  f"headerItem.addSubItem({notes_menu_id}"
+              )
+              if (c_ca_cr + c_ca_menu) > 0:
+                  with open(ca_path, "w", encoding="utf-8") as f:
+                      f.write(ca)
+              if c_ca_menu > 0:
+                  ui_hooks_ok += 1
+              diag("UI_CHAT", f"Patched {ca_path}: onCreate={c_ca_cr}({st_ca_cr}), directSubItem={c_ca_menu}({st_ca_menu})")
+
+          # 10C. DialogsActivity
+          for da_path in glob.glob("TMessagesProj/src/main/java/**/DialogsActivity.java", recursive=True):
+              try:
+                  with open(da_path, "r", encoding="utf-8") as f:
+                      da = f.read()
+              except Exception:
+                  continue
+              da, c_da_cr, st_da_cr = inject_at_method_start(
+                  da,
+                  r'public\s+boolean\s+onFragmentCreate\s*\(\s*\)',
+                  '        try { org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity()); } catch (Throwable ignored) {}',
+                  "org.telegram.messenger.LocalWhisperHelper.refreshDisplayAndGuestGuard(getParentActivity())"
+              )
+              da_menu_snippet = f"""
+                      try {{
+                          org.telegram.ui.ActionBar.ActionBarMenu notesDialogsMenu = actionBar.createMenu();
+                          if (notesDialogsMenu != null) {{
+                              org.telegram.ui.ActionBar.ActionBarMenuItem notesDItem = notesDialogsMenu.addItem({notes_menu_id}, org.telegram.messenger.R.drawable.msg_settings);
+                              notesDItem.setContentDescription("Notes");
+                              notesDItem.setOnClickListener(new android.view.View.OnClickListener() {{
+                                  @Override
+                                  public void onClick(android.view.View v) {{
+                                      org.telegram.messenger.LocalWhisperHelper.openNotesMainHub(getParentActivity(), 0L);
+                                  }}
+                              }});
+                          }}
+                      }} catch (Throwable ignored) {{}}
+              """
+              da, c_da_menu, st_da_menu = inject_after_statement_in_method(
+                  da,
+                  r'public\s+View\s+createView\s*\([^)]*\)',
+                  r'actionBar\.setActionBarMenuOnItemClick\s*\([^;]*\)\s*;',
+                  da_menu_snippet,
+                  f"notesDialogsMenu.addItem({notes_menu_id}"
+              )
+              if (c_da_cr + c_da_menu) > 0:
+                  with open(da_path, "w", encoding="utf-8") as f:
+                      f.write(da)
+              if c_da_menu > 0:
+                  ui_hooks_ok += 1
+              diag("UI_DIALOGS", f"Patched {da_path}: onCreate={c_da_cr}({st_da_cr}), directMenu={c_da_menu}({st_da_menu})")
+
+          diag("UI_GATE", f"Active direct-click UI entry points injected: {ui_hooks_ok}/3")
+          if ui_hooks_ok == 0:
+              diag("FATAL", "No UI entry points were injected! Stopping early before Gradle.")
+              sys.exit(1)
           EOF
 
       - name: Build arm64 Release APK
@@ -1722,14 +1749,13 @@ jobs:
           APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
           "$AAPT" dump badging "$APK_PATH" | head -n 30
           "$AAPT" dump badging "$APK_PATH" | grep -q "package: name='com.alexey.notesclient'"
-          "$AAPT" dump badging "$APK_PATH" | grep -q "package:"
           "$APKSIGNER" verify --verbose --print-certs "$APK_PATH"
 
-      - name: Upload APK & v3 Diagnostics
+      - name: Upload APK & v9 Diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NotesClient-arm64-v3
+          name: NotesClient-arm64-v9
           path: |
             TMessagesProj_App/build/outputs/apk/**/*.apk
-            v3_diagnostics/patch_report.log
+            v9_diagnostics/patch_report.log
